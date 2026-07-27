@@ -5,6 +5,7 @@ const cors = require('cors');
 const { Telegraf } = require('telegraf');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { getProducts, getProductById } = require('./services/googleSheets');
+const { initializeRAG, findRelevantPolicy } = require('./services/ragService');
 const { Redis } = require('@upstash/redis');
 
 // Initialize Upstash Redis with fallback to in-memory store if credentials are missing
@@ -114,7 +115,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Core AI Chat Processing Engine (Shared by Web API and Telegram Bot)
 async function processAIChat({ sessionId, userMessage }) {
-  const systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory and pricing information when answering customer questions. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional.`;
+  const systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. Use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, FAQ, etc. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional.`;
 
   const searchProductsTool = {
     functionDeclarations: [
@@ -133,6 +134,20 @@ async function processAIChat({ sessionId, userMessage }) {
               description: "The product category to filter by (e.g., Electronics, Accessories)."
             }
           }
+        }
+      },
+      {
+        name: "askStorePolicy",
+        description: "Look up store policies, return policies, shipping information, FAQs, or any general store rules.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: {
+              type: "STRING",
+              description: "The specific policy topic or question the user is asking about (e.g. 'return policy', 'shipping times')."
+            }
+          },
+          required: ["query"]
         }
       }
     ]
@@ -158,9 +173,12 @@ async function processAIChat({ sessionId, userMessage }) {
       let result = await chat.sendMessage(userMessage);
       
       let searchResults = null;
+      let policyResult = null;
       const functionCalls = result.response.functionCalls ? result.response.functionCalls() : [];
+      
       if (functionCalls && functionCalls.length > 0) {
          const call = functionCalls[0];
+         
          if (call.name === 'searchProducts') {
             console.log(`🤖 [${sessionId}] Model called searchProducts with args:`, call.args);
             searchResults = await executeSearch(call.args);
@@ -170,6 +188,19 @@ async function processAIChat({ sessionId, userMessage }) {
             currentHistory.pop(); // Remove original user prompt
             
             const appendedMessage = `${userMessage}\n\n[System: You called searchProducts. The inventory search returned the following matching items: ${JSON.stringify(searchResults)}. Please provide a clear, friendly, and helpful answer to the user listing these products and their prices.]`;
+            
+            chat = model.startChat({ history: currentHistory });
+            result = await chat.sendMessage(appendedMessage);
+         } 
+         else if (call.name === 'askStorePolicy') {
+            console.log(`🤖 [${sessionId}] Model called askStorePolicy with args:`, call.args);
+            policyResult = await findRelevantPolicy(call.args.query);
+            
+            const currentHistory = await chat.getHistory();
+            currentHistory.pop();
+            currentHistory.pop();
+            
+            const appendedMessage = `${userMessage}\n\n[System: You called askStorePolicy. The database returned the following info: "${policyResult}". Please provide a clear, helpful answer to the user based on this policy.]`;
             
             chat = model.startChat({ history: currentHistory });
             result = await chat.sendMessage(appendedMessage);
@@ -247,8 +278,10 @@ bot.on('text', async (ctx) => {
 });
 
 // Start Express Server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Express server is running on http://localhost:${PORT}`);
+  // Initialize RAG embeddings from Google Sheets
+  await initializeRAG();
 });
 
 // Start Telegram Bot
