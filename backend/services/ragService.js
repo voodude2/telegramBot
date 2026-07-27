@@ -119,6 +119,11 @@ async function initializeRAG() {
   }
   
   console.log(`✅ [RAG] Initialized ${policyKnowledgeBase.length} policies with embeddings.`);
+  
+  if (policyKnowledgeBase.length > 0) {
+    console.log("აი, როგორ გამოიყურება პირველი წესის ვექტორი (Embedding):");
+    console.log(policyKnowledgeBase[0].embedding);
+  }
 }
 
 /**
