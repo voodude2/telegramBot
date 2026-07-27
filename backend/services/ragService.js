@@ -3,7 +3,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // We use the embedding model to convert text to vectors
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const embeddingModel = genAI.getGenerativeModel({ model: 'text-embedding-004' });
+const embeddingModel = genAI.getGenerativeModel({ model: 'gemini-embedding-2' });
 
 // In-memory array to store our pre-computed policy embeddings
 // Format: [ { question: string, answer: string, embedding: number[] } ]
