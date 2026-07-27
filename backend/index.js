@@ -198,11 +198,12 @@ async function processAIChat({ sessionId, userMessage }) {
       break;
     } catch (err) {
       lastError = err;
-      console.warn(`Model ${modelName} failed for session ${sessionId}, trying next... Error:`, err.message);
+      console.warn(`⚠️ Model ${modelName} failed for session ${sessionId}. Error details:`, err);
     }
   }
 
   if (lastError && !responseText) {
+    console.error(`❌ [processAIChat] All candidate models failed. Final error:`, lastError);
     throw lastError;
   }
 
@@ -220,7 +221,7 @@ app.post('/api/chat', async (req, res) => {
     const reply = await processAIChat({ sessionId: cleanSessionId, userMessage: message });
     res.json({ reply });
   } catch (err) {
-    console.error('Error handling /api/chat:', err);
+    console.error('❌ [API /api/chat] Error handling chat request:', err);
     res.status(500).json({ error: 'Failed to process AI chat request' });
   }
 });
@@ -240,7 +241,7 @@ bot.on('text', async (ctx) => {
     const responseText = await processAIChat({ sessionId: chatId, userMessage });
     await ctx.reply(responseText);
   } catch (error) {
-    console.error('Error handling Telegram message:', error);
+    console.error('❌ [Telegram Bot] Error handling message:', error);
     await ctx.reply('Sorry, a technical error occurred. Please try again later. / ბოდიში, ტექნიკური შეცდომა მოხდა. გთხოვთ, სცადოთ მოგვიანებით.');
   }
 });
