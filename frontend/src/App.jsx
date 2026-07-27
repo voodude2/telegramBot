@@ -4,6 +4,8 @@ import ProductCard from './components/ProductCard';
 import CartSidebar from './components/CartSidebar';
 import AIChatWidget from './components/AIChatWidget';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
 const fallbackProducts = [
   { id: 1, name: "Apple iPhone 15 Pro", category: "Smartphones", description: "Forged in titanium and featuring the groundbreaking A17 Pro chip.", price: 999, rating: 4.9, inStock: true, image: "https://images.unsplash.com/photo-1695048133142-1a20484d2569?q=80&w=400&auto=format&fit=crop" },
   { id: 2, name: "Apple MacBook Pro 14\" M3", category: "Computers", description: "Mind-blowing performance with the M3 chip.", price: 1599, rating: 4.8, inStock: true, image: "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?q=80&w=400&auto=format&fit=crop" },
@@ -26,7 +28,7 @@ export default function App() {
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        const response = await fetch('http://localhost:3000/api/products');
+        const response = await fetch(`${API_URL}/api/products`);
         if (!response.ok) throw new Error('Failed to fetch products');
         const data = await response.json();
         setProducts(data);
