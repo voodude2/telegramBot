@@ -190,9 +190,14 @@ async function processAIChat({ sessionId, userMessage }) {
               console.error('Error executing search:', sErr);
             }
             
-            const appendedMessage = `[System: You called searchProducts. The inventory search returned the following matching items: ${JSON.stringify(searchResults)}. Please provide a clear, friendly, and helpful answer to the user listing these products and their prices.]`;
+            const functionResponseParts = [{
+              functionResponse: {
+                name: 'searchProducts',
+                response: { result: searchResults }
+              }
+            }];
             try {
-              result = await chat.sendMessage(appendedMessage);
+              result = await chat.sendMessage(functionResponseParts);
             } catch (mErr) {
               console.warn('Failed to send search follow-up message:', mErr);
             }
@@ -205,9 +210,14 @@ async function processAIChat({ sessionId, userMessage }) {
               console.error('Error finding policy:', pErr);
             }
             
-            const appendedMessage = `[System: You called askStorePolicy. The database returned the following info: "${policyResult}". Please provide a clear, helpful answer to the user based on this policy.]`;
+            const functionResponseParts = [{
+              functionResponse: {
+                name: 'askStorePolicy',
+                response: { policy: policyResult }
+              }
+            }];
             try {
-              result = await chat.sendMessage(appendedMessage);
+              result = await chat.sendMessage(functionResponseParts);
             } catch (mErr) {
               console.warn('Failed to send policy follow-up message:', mErr);
             }
