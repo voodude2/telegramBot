@@ -183,27 +183,23 @@ async function processAIChat({ sessionId, userMessage }) {
             console.log(`🤖 [${sessionId}] Model called searchProducts with args:`, call.args);
             searchResults = await executeSearch(call.args);
             
-            const currentHistory = await chat.getHistory();
-            currentHistory.pop(); // Remove functionCall
-            currentHistory.pop(); // Remove original user prompt
-            
-            const appendedMessage = `${userMessage}\n\n[System: You called searchProducts. The inventory search returned the following matching items: ${JSON.stringify(searchResults)}. Please provide a clear, friendly, and helpful answer to the user listing these products and their prices.]`;
-            
-            chat = model.startChat({ history: currentHistory });
-            result = await chat.sendMessage(appendedMessage);
+            result = await chat.sendMessage([{
+              functionResponse: {
+                name: 'searchProducts',
+                response: { products: searchResults }
+              }
+            }]);
          } 
          else if (call.name === 'askStorePolicy') {
             console.log(`🤖 [${sessionId}] Model called askStorePolicy with args:`, call.args);
             policyResult = await findRelevantPolicy(call.args.query);
             
-            const currentHistory = await chat.getHistory();
-            currentHistory.pop();
-            currentHistory.pop();
-            
-            const appendedMessage = `${userMessage}\n\n[System: You called askStorePolicy. The database returned the following info: "${policyResult}". Please provide a clear, helpful answer to the user based on this policy.]`;
-            
-            chat = model.startChat({ history: currentHistory });
-            result = await chat.sendMessage(appendedMessage);
+            result = await chat.sendMessage([{
+              functionResponse: {
+                name: 'askStorePolicy',
+                response: { policy: policyResult }
+              }
+            }]);
          }
       }
 
