@@ -157,9 +157,12 @@ async function processAIChat({ sessionId, userMessage }) {
 
   let history = await getChatHistory(sessionId);
 
-  const candidateModels = ['gemini-3.5-flash-lite'];
+  // Supported Gemini models with fallbacks for maximum reliability
+  const candidateModels = ['gemini-2.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash', 'gemini-1.5-pro-latest'];
   let responseText = '';
   let lastError = null;
+  let searchResults = null;
+  let policyResult = null;
 
   for (const modelName of candidateModels) {
     try {
@@ -174,8 +177,6 @@ async function processAIChat({ sessionId, userMessage }) {
       
       let result = await chat.sendMessage(userMessage);
       
-      let searchResults = null;
-      let policyResult = null;
       const functionCalls = result.response.functionCalls ? result.response.functionCalls() : [];
       
       if (functionCalls && functionCalls.length > 0) {
@@ -183,28 +184,49 @@ async function processAIChat({ sessionId, userMessage }) {
          
          if (call.name === 'searchProducts') {
             console.log(`🤖 [${sessionId}] Model called searchProducts with args:`, call.args);
-            searchResults = await executeSearch(call.args);
+            try {
+              searchResults = await executeSearch(call.args);
+            } catch (sErr) {
+              console.error('Error executing search:', sErr);
+            }
             
             const appendedMessage = `[System: You called searchProducts. The inventory search returned the following matching items: ${JSON.stringify(searchResults)}. Please provide a clear, friendly, and helpful answer to the user listing these products and their prices.]`;
-            result = await chat.sendMessage(appendedMessage);
+            try {
+              result = await chat.sendMessage(appendedMessage);
+            } catch (mErr) {
+              console.warn('Failed to send search follow-up message:', mErr);
+            }
          } 
          else if (call.name === 'askStorePolicy') {
             console.log(`🤖 [${sessionId}] Model called askStorePolicy with args:`, call.args);
-            policyResult = await findRelevantPolicy(call.args.query);
+            try {
+              policyResult = await findRelevantPolicy(call.args.query || userMessage);
+            } catch (pErr) {
+              console.error('Error finding policy:', pErr);
+            }
             
             const appendedMessage = `[System: You called askStorePolicy. The database returned the following info: "${policyResult}". Please provide a clear, helpful answer to the user based on this policy.]`;
-            result = await chat.sendMessage(appendedMessage);
+            try {
+              result = await chat.sendMessage(appendedMessage);
+            } catch (mErr) {
+              console.warn('Failed to send policy follow-up message:', mErr);
+            }
          }
       }
 
       try {
-        responseText = result.response.text();
+        if (result && result.response) {
+          responseText = result.response.text();
+        }
       } catch (e) {
         responseText = '';
       }
 
+      // Graceful Fallback if model response text is empty after tool execution
       if (!responseText || responseText.trim() === '') {
-        if (searchResults && searchResults.length > 0) {
+        if (policyResult) {
+          responseText = policyResult;
+        } else if (searchResults && searchResults.length > 0) {
           responseText = "Here are the matching items found in our live inventory:\n\n" + 
             searchResults.map(p => `• **${p.name}** - $${p.price} (${p.inStock ? 'In Stock' : 'Out of Stock'})\n  _${p.description}_`).join('\n\n');
         } else if (searchResults && searchResults.length === 0) {
@@ -212,20 +234,31 @@ async function processAIChat({ sessionId, userMessage }) {
         }
       }
       
-      const newHistory = await chat.getHistory();
-      await saveChatHistory(sessionId, newHistory);
-      
-      lastError = null;
-      break;
+      if (responseText && responseText.trim() !== '') {
+        try {
+          const newHistory = await chat.getHistory();
+          await saveChatHistory(sessionId, newHistory);
+        } catch (hErr) {
+          console.warn('Failed to save chat history:', hErr);
+        }
+        lastError = null;
+        break; // Successfully got a response, exit model loop
+      }
     } catch (err) {
       lastError = err;
-      console.warn(`⚠️ Model ${modelName} failed for session ${sessionId}. Error details:`, err);
+      console.warn(`⚠️ Model ${modelName} failed for session ${sessionId}. Error details:`, err.message || err);
     }
   }
 
-  if (lastError && !responseText) {
-    console.error(`❌ [processAIChat] All candidate models failed. Final error:`, lastError);
-    throw lastError;
+  // Final Graceful Error Fallback (Prevents 500 crashes or empty responses)
+  if (!responseText || responseText.trim() === '') {
+    if (policyResult) {
+      return policyResult;
+    }
+    if (lastError) {
+      console.error(`❌ [processAIChat] All candidate models failed. Final error:`, lastError);
+    }
+    return "I am experiencing a temporary connection hiccup with the AI server, but I am still here to assist you! Please try asking your question again.";
   }
 
   return responseText;
