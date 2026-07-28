@@ -183,23 +183,15 @@ async function processAIChat({ sessionId, userMessage }) {
             console.log(`🤖 [${sessionId}] Model called searchProducts with args:`, call.args);
             searchResults = await executeSearch(call.args);
             
-            result = await chat.sendMessage([{
-              functionResponse: {
-                name: 'searchProducts',
-                response: { products: searchResults }
-              }
-            }]);
+            const appendedMessage = `[System: You called searchProducts. The inventory search returned the following matching items: ${JSON.stringify(searchResults)}. Please provide a clear, friendly, and helpful answer to the user listing these products and their prices.]`;
+            result = await chat.sendMessage(appendedMessage);
          } 
          else if (call.name === 'askStorePolicy') {
             console.log(`🤖 [${sessionId}] Model called askStorePolicy with args:`, call.args);
             policyResult = await findRelevantPolicy(call.args.query);
             
-            result = await chat.sendMessage([{
-              functionResponse: {
-                name: 'askStorePolicy',
-                response: { policy: policyResult }
-              }
-            }]);
+            const appendedMessage = `[System: You called askStorePolicy. The database returned the following info: "${policyResult}". Please provide a clear, helpful answer to the user based on this policy.]`;
+            result = await chat.sendMessage(appendedMessage);
          }
       }
 
