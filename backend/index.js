@@ -212,11 +212,17 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
       });
 
       const clonedHistory = JSON.parse(JSON.stringify(history));
-      let sanitizedHistory = clonedHistory.filter(msg => {
-        if (msg.parts && msg.parts.some(p => p.functionCall || p.functionResponse)) {
-          return false;
-        }
-        return true;
+      let sanitizedHistory = clonedHistory.map(msg => {
+        let newParts = msg.parts.map(p => {
+          if (p.functionCall) {
+            return { text: `[Action Taken]: I used the tool '${p.functionCall.name}' with arguments: ${JSON.stringify(p.functionCall.args)}.` };
+          }
+          if (p.functionResponse) {
+            return { text: `[Tool Result for '${p.functionResponse.name}']: ${JSON.stringify(p.functionResponse.response)}` };
+          }
+          return p;
+        });
+        return { role: msg.role === 'function' ? 'user' : msg.role, parts: newParts };
       });
       // Sanitize history: Gemini SDK requires history to start with a 'user' role
       const firstUserIdx = sanitizedHistory.findIndex(msg => msg.role === 'user');
@@ -233,6 +239,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
       responseText = "";
 
       const handleStream = async (streamResult) => {
+        functionCalls = [];
         for await (const chunk of streamResult.stream) {
           try {
             const fcs = chunk.functionCalls ? chunk.functionCalls() : [];
@@ -354,12 +361,6 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
            break;
         }
 
-        // Check if the model wants another tool call
-        try {
-          functionCalls = result.response.functionCalls ? result.response.functionCalls() : [];
-        } catch (fcErr) {
-          functionCalls = [];
-        }
       }
 
       // Extract text response
