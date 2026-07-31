@@ -176,8 +176,8 @@ async function processAIChat({ sessionId, userMessage }) {
 
   let history = await getChatHistory(sessionId);
 
-  // Strictly using Gemini 3.5 Flash-Lite
-  const candidateModels = ['gemini-3.5-flash-lite'];
+  // Primary: Gemini 3.1 Flash-Lite with robust fallbacks for continuous availability
+  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash'];
   let responseText = '';
   let actions = [];
   let lastError = null;
