@@ -177,7 +177,7 @@ async function processAIChat({ sessionId, userMessage }) {
   let history = await getChatHistory(sessionId);
 
   // Supported Gemini models with fallbacks for maximum reliability
-  const candidateModels = ['gemini-2.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash', 'gemini-1.5-pro-latest'];
+  const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite-preview-06-17', 'gemini-1.5-flash'];
   let responseText = '';
   let actions = [];
   let lastError = null;
@@ -186,6 +186,7 @@ async function processAIChat({ sessionId, userMessage }) {
 
   for (const modelName of candidateModels) {
     try {
+      console.log(`🔄 [${sessionId}] Trying model: ${modelName}`);
       const model = genAI.getGenerativeModel({
         model: modelName,
         systemInstruction: systemInstruction,
@@ -197,75 +198,110 @@ async function processAIChat({ sessionId, userMessage }) {
       
       let result = await chat.sendMessage(userMessage);
       
-      const functionCalls = result.response.functionCalls ? result.response.functionCalls() : [];
+      let functionCalls = [];
+      try {
+        functionCalls = result.response.functionCalls ? result.response.functionCalls() : [];
+      } catch (fcErr) {
+        console.warn(`⚠️ [${sessionId}] Error reading functionCalls:`, fcErr.message);
+      }
       
-      if (functionCalls && functionCalls.length > 0) {
-         const call = functionCalls[0];
+      // Process up to 3 rounds of sequential tool calls (handles multi-step tool usage)
+      let toolRound = 0;
+      while (functionCalls && functionCalls.length > 0 && toolRound < 3) {
+        toolRound++;
+        const call = functionCalls[0];
+        console.log(`🤖 [${sessionId}] Round ${toolRound}: Model called ${call.name} with args:`, call.args);
          
-         if (call.name === 'searchProducts') {
-            console.log(`🤖 [${sessionId}] Model called searchProducts with args:`, call.args);
-            try {
-              searchResults = await executeSearch(call.args);
-            } catch (sErr) {
-              console.error('Error executing search:', sErr);
-            }
-            
-            const functionResponseParts = [{
-              functionResponse: {
-                name: 'searchProducts',
-                response: { result: searchResults }
-              }
-            }];
-            try {
-              result = await chat.sendMessage(functionResponseParts);
-            } catch (mErr) {
-              console.warn('Failed to send search follow-up message:', mErr);
-            }
-         } 
-         else if (call.name === 'askStorePolicy') {
-            console.log(`🤖 [${sessionId}] Model called askStorePolicy with args:`, call.args);
-            try {
-              policyResult = await findRelevantPolicy(call.args.query || userMessage);
-            } catch (pErr) {
-              console.error('Error finding policy:', pErr);
-            }
-            
-            const functionResponseParts = [{
-              functionResponse: {
-                name: 'askStorePolicy',
-                response: { policy: policyResult }
-              }
-            }];
-            try {
-              result = await chat.sendMessage(functionResponseParts);
-            } catch (mErr) {
-              console.warn('Failed to send policy follow-up message:', mErr);
-            }
-         }
-         else if (call.name === 'addToCart') {
-            console.log(`🤖 [${sessionId}] Model called addToCart with args:`, call.args);
-            actions.push({ type: 'ADD_TO_CART', payload: call.args });
-            
-            const functionResponseParts = [{
-              functionResponse: {
-                name: 'addToCart',
-                response: { success: true, message: "Product successfully added to cart. Tell the user it has been added." }
-              }
-            }];
-            try {
-              result = await chat.sendMessage(functionResponseParts);
-            } catch (mErr) {
-              console.warn('Failed to send addToCart follow-up message:', mErr);
-            }
-         }
+        if (call.name === 'searchProducts') {
+           try {
+             searchResults = await executeSearch(call.args);
+             console.log(`✅ [${sessionId}] searchProducts returned ${searchResults.length} results`);
+           } catch (sErr) {
+             console.error(`❌ [${sessionId}] Error executing search:`, sErr.message);
+             searchResults = [];
+           }
+           
+           const functionResponseParts = [{
+             functionResponse: {
+               name: 'searchProducts',
+               response: { result: searchResults }
+             }
+           }];
+           try {
+             result = await chat.sendMessage(functionResponseParts);
+           } catch (mErr) {
+             console.warn(`⚠️ [${sessionId}] Failed to send search follow-up:`, mErr.message);
+             // Build fallback response from search results directly
+             if (searchResults && searchResults.length > 0) {
+               responseText = "Here are the matching items found in our live inventory:\n\n" + 
+                 searchResults.map(p => `• **${p.name}** - $${p.price} (${p.inStock ? 'In Stock' : 'Out of Stock'})\n  _${p.description}_`).join('\n\n');
+             } else {
+               responseText = "We currently don't have exact matches in stock for that item. Feel free to ask about our smartphones, laptops, audio gear, or accessories!";
+             }
+             break;
+           }
+        } 
+        else if (call.name === 'askStorePolicy') {
+           try {
+             policyResult = await findRelevantPolicy(call.args.query || userMessage);
+             console.log(`✅ [${sessionId}] askStorePolicy returned result`);
+           } catch (pErr) {
+             console.error(`❌ [${sessionId}] Error finding policy:`, pErr.message);
+           }
+           
+           const functionResponseParts = [{
+             functionResponse: {
+               name: 'askStorePolicy',
+               response: { policy: policyResult || "No specific policy found for that topic." }
+             }
+           }];
+           try {
+             result = await chat.sendMessage(functionResponseParts);
+           } catch (mErr) {
+             console.warn(`⚠️ [${sessionId}] Failed to send policy follow-up:`, mErr.message);
+             if (policyResult) responseText = policyResult;
+             break;
+           }
+        }
+        else if (call.name === 'addToCart') {
+           actions.push({ type: 'ADD_TO_CART', payload: call.args });
+           console.log(`✅ [${sessionId}] addToCart action queued for product: ${call.args.productName}`);
+           
+           const functionResponseParts = [{
+             functionResponse: {
+               name: 'addToCart',
+               response: { success: true, message: "Product successfully added to cart. Tell the user it has been added." }
+             }
+           }];
+           try {
+             result = await chat.sendMessage(functionResponseParts);
+           } catch (mErr) {
+             console.warn(`⚠️ [${sessionId}] Failed to send addToCart follow-up:`, mErr.message);
+             responseText = `✅ ${call.args.productName} has been added to your cart!`;
+             break;
+           }
+        }
+        else {
+           console.warn(`⚠️ [${sessionId}] Unknown function call: ${call.name}`);
+           break;
+        }
+
+        // Check if the model wants another tool call
+        try {
+          functionCalls = result.response.functionCalls ? result.response.functionCalls() : [];
+        } catch (fcErr) {
+          functionCalls = [];
+        }
       }
 
+      // Extract text response
       try {
         if (result && result.response) {
-          responseText = result.response.text();
+          responseText = responseText || result.response.text();
         }
       } catch (e) {
-        responseText = '';
+        console.warn(`⚠️ [${sessionId}] Could not extract text from response:`, e.message);
+        // Don't overwrite responseText if we already have a fallback
       }
 
       // Graceful Fallback if model response text is empty after tool execution
@@ -281,18 +317,19 @@ async function processAIChat({ sessionId, userMessage }) {
       }
       
       if (responseText && responseText.trim() !== '') {
+        console.log(`✅ [${sessionId}] Successfully generated response with model ${modelName}`);
         try {
           const newHistory = await chat.getHistory();
           await saveChatHistory(sessionId, newHistory);
         } catch (hErr) {
-          console.warn('Failed to save chat history:', hErr);
+          console.warn(`⚠️ [${sessionId}] Failed to save chat history:`, hErr.message);
         }
         lastError = null;
         break; // Successfully got a response, exit model loop
       }
     } catch (err) {
       lastError = err;
-      console.warn(`⚠️ Model ${modelName} failed for session ${sessionId}. Error details:`, err.message || err);
+      console.warn(`⚠️ Model ${modelName} failed for session ${sessionId}. Error:`, err.message || err);
     }
   }
 
