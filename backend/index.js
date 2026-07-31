@@ -450,7 +450,7 @@ app.post('/api/chat', async (req, res) => {
     if (!message && !media) {
       return res.status(400).json({ error: 'Message or media is required' });
     }
-    const cleanSessionId = sessionId || 'web_default_session';
+    const cleanSessionId = sessionId || require('crypto').randomUUID();
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
