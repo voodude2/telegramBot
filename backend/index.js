@@ -212,15 +212,21 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
       });
 
       const clonedHistory = JSON.parse(JSON.stringify(history));
+      let sanitizedHistory = clonedHistory.filter(msg => {
+        if (msg.parts && msg.parts.some(p => p.functionCall || p.functionResponse)) {
+          return false;
+        }
+        return true;
+      });
       // Sanitize history: Gemini SDK requires history to start with a 'user' role
-      const firstUserIdx = clonedHistory.findIndex(msg => msg.role === 'user');
+      const firstUserIdx = sanitizedHistory.findIndex(msg => msg.role === 'user');
       if (firstUserIdx > 0) {
-        clonedHistory.splice(0, firstUserIdx);
+        sanitizedHistory.splice(0, firstUserIdx);
       } else if (firstUserIdx === -1) {
-        clonedHistory.length = 0;
+        sanitizedHistory.length = 0;
       }
       
-      let chat = model.startChat({ history: clonedHistory });
+      let chat = model.startChat({ history: sanitizedHistory });
       
       let result;
       let functionCalls = [];
@@ -398,7 +404,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
       break; // Successfully got a response, exit model loop
     } catch (err) {
       lastError = err;
-      console.warn(`⚠️ Model ${modelName} failed for session ${sessionId}. Error:`, err.message || err);
+      console.warn(`⚠️ Model ${modelName} failed for session ${sessionId}. Error:`, err);
     }
   }
 
