@@ -117,23 +117,24 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Core AI Chat Processing Engine (Shared by Web API and Telegram Bot)
 async function processAIChat({ sessionId, userMessage }) {
-  const systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. Use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, FAQ, etc. Use the addToCart tool when a user explicitly wants to buy or add a product to their shopping cart. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries.`;
+  const systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. Use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, FAQ, etc. Use the addToCart tool when a user explicitly wants to buy or add a product to their shopping cart. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries. CRITICAL: The product database is in English. You MUST translate user product queries and categories to English BEFORE using the searchProducts tool. The ONLY valid categories are: Smartphone, Laptop, Audio, Wearable, Gaming, Tablet, TV, Drone, VR.`;
 
   const searchProductsTool = {
     functionDeclarations: [
       {
         name: "searchProducts",
-        description: "Search the real-time product inventory for products matching a specific query or category.",
+        description: "Search the real-time product inventory. CRITICAL: The database is in English. You MUST translate any non-English search queries or categories to English before calling this tool.",
         parameters: {
           type: "OBJECT",
           properties: {
             searchQuery: {
               type: "STRING",
-              description: "The search query to match against product names or descriptions."
+              description: "The English search query to match against product names or descriptions."
             },
             category: {
               type: "STRING",
-              description: "The product category to filter by (e.g., Electronics, Accessories)."
+              description: "The English product category to filter by.",
+              enum: ["Smartphone", "Laptop", "Audio", "Wearable", "Gaming", "Tablet", "TV", "Drone", "VR"]
             }
           }
         }
