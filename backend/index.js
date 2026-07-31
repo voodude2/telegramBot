@@ -230,7 +230,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
       
       let result;
       let functionCalls = [];
-      let responseText = "";
+      responseText = "";
 
       const handleStream = async (streamResult) => {
         for await (const chunk of streamResult.stream) {
