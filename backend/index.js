@@ -177,7 +177,7 @@ async function processAIChat({ sessionId, userMessage }) {
   let history = await getChatHistory(sessionId);
 
   // Supported Gemini models with fallbacks for maximum reliability
-  const candidateModels = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  const candidateModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-1.5-flash'];
   let responseText = '';
   let actions = [];
   let lastError = null;
