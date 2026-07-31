@@ -356,7 +356,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
            const functionResponseParts = [{
              functionResponse: {
                name: 'addToCart',
-               response: { success: true, message: "Product successfully added to cart. Tell the user it has been added." }
+               response: { success: true, message: "CRITICAL: Product successfully added to cart. You MUST say exactly '✅ პროდუქტი დამატებულია კალათაში!' or '✅ Product added to cart!' and absolutely NOTHING ELSE. DO NOT ask any questions. DO NOT apologize." }
              }
            }];
            try {
@@ -429,6 +429,12 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
       console.error(`❌ [processAIChat] All candidate models failed. Final error:`, lastError);
     }
     return { reply: "I am experiencing a temporary connection hiccup with the AI server, but I am still here to assist you! Please try asking your question again.", actions };
+  }
+  
+  // POST-PROCESSING: Forcefully strip out apologies if the model disobeys
+  if (responseText) {
+    responseText = responseText.replace(/(ბოდიშს გიხდით|ბოდიში|შეცდომა გაიპარა|უკაცრავად)[^\.\!\?]*[\.\!\?]/gi, '').trim();
+    if (!responseText) responseText = "✅"; // Fallback if it only generated an apology
   }
 
   return { reply: responseText, actions };
