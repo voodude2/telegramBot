@@ -222,7 +222,15 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
       
       let chat = model.startChat({ history: clonedHistory });
       
-      let result = await chat.sendMessage(media ? [userMessage, media] : userMessage);
+      let messagePayload = userMessage;
+      if (media) {
+        const inlineData = media.inlineData || media;
+        messagePayload = [
+          userMessage, // String is fine here in the array, SDK will cast it to { text: '...' }
+          { inlineData: { data: inlineData.data, mimeType: inlineData.mimeType } }
+        ];
+      }
+      let result = await chat.sendMessage(messagePayload);
       
       let functionCalls = [];
       try {
