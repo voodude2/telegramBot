@@ -254,59 +254,65 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
       let toolRound = 0;
       while (functionCalls && functionCalls.length > 0 && toolRound < 5) {
         toolRound++;
-        const call = functionCalls[0]; // GenAI models generally return 1 call at a time for this flow
-        console.log(`🤖 [${sessionId}] Round ${toolRound}: Model called ${call.name} with args:`, call.args);
+        const currentCalls = functionCalls;
+        functionCalls = []; // Clear for next round
+        let responseParts = [];
         
-        let functionResponsePart = {
-          functionResponse: {
-            name: call.name,
-            response: {}
+        for (const call of currentCalls) {
+          console.log(`🤖 [${sessionId}] Round ${toolRound}: Model called ${call.name} with args:`, call.args);
+          
+          let functionResponsePart = {
+            functionResponse: {
+              name: call.name,
+              response: {}
+            }
+          };
+          if (call.id) {
+            functionResponsePart.functionResponse.id = call.id;
           }
-        };
-        // Some SDK versions still expect the call ID
-        if (call.id) {
-          functionResponsePart.functionResponse.id = call.id;
-        }
-         
-        if (call.name === 'searchProducts') {
-           try {
-             searchResults = await executeSearch(call.args);
-             console.log(`✅ [${sessionId}] searchProducts returned ${searchResults.length} results`);
-           } catch (sErr) {
-             console.error(`❌ [${sessionId}] Error executing search:`, sErr.message);
-             searchResults = [];
-           }
-           const minimalResults = searchResults.map(p => ({ id: p.id, name: p.name, price: p.price, inStock: p.inStock }));
-           functionResponsePart.functionResponse.response = { result: minimalResults };
-        } 
-        else if (call.name === 'askStorePolicy') {
-           try {
-             policyResult = await findRelevantPolicy(call.args.query || userMessage);
-             console.log(`✅ [${sessionId}] askStorePolicy returned result`);
-           } catch (pErr) {
-             console.error(`❌ [${sessionId}] Error finding policy:`, pErr.message);
-           }
            
-           let policyObj = {};
-           try {
-             policyObj = JSON.parse(policyResult);
-           } catch(e) {
-             policyObj = { policy: policyResult || "No specific policy found for that topic." };
-           }
-           functionResponsePart.functionResponse.response = policyObj;
-        }
-        else if (call.name === 'addToCart') {
-           actions.push({ type: 'ADD_TO_CART', payload: call.args });
-           console.log(`✅ [${sessionId}] addToCart action queued for product: ${call.args.productName}`);
-           functionResponsePart.functionResponse.response = { success: true, message: "Product successfully added to cart." };
-        }
-        else {
-           console.warn(`⚠️ [${sessionId}] Unknown function call: ${call.name}`);
-           functionResponsePart.functionResponse.response = { error: "Unknown function" };
+          if (call.name === 'searchProducts') {
+             try {
+               searchResults = await executeSearch(call.args);
+               console.log(`✅ [${sessionId}] searchProducts returned ${searchResults.length} results`);
+             } catch (sErr) {
+               console.error(`❌ [${sessionId}] Error executing search:`, sErr.message);
+               searchResults = [];
+             }
+             const minimalResults = searchResults.map(p => ({ id: p.id, name: p.name, price: p.price, inStock: p.inStock }));
+             functionResponsePart.functionResponse.response = { result: minimalResults };
+          } 
+          else if (call.name === 'askStorePolicy') {
+             try {
+               policyResult = await findRelevantPolicy(call.args.query || userMessage);
+               console.log(`✅ [${sessionId}] askStorePolicy returned result`);
+             } catch (pErr) {
+               console.error(`❌ [${sessionId}] Error finding policy:`, pErr.message);
+             }
+             
+             let policyObj = {};
+             try {
+               policyObj = JSON.parse(policyResult);
+             } catch(e) {
+               policyObj = { policy: policyResult || "No specific policy found for that topic." };
+             }
+             functionResponsePart.functionResponse.response = policyObj;
+          }
+          else if (call.name === 'addToCart') {
+             actions.push({ type: 'ADD_TO_CART', payload: call.args });
+             console.log(`✅ [${sessionId}] addToCart action queued for product: ${call.args.productName}`);
+             functionResponsePart.functionResponse.response = { success: true, message: "Product successfully added to cart." };
+          }
+          else {
+             console.warn(`⚠️ [${sessionId}] Unknown function call: ${call.name}`);
+             functionResponsePart.functionResponse.response = { error: "Unknown function" };
+          }
+          
+          responseParts.push(functionResponsePart);
         }
 
         try {
-          await handleStream(await chat.sendMessageStream({ message: [functionResponsePart] }));
+          await handleStream(await chat.sendMessageStream({ message: responseParts }));
         } catch (mErr) {
           console.warn(`⚠️ [${sessionId}] Failed to send follow-up:`, mErr.message);
           break;
