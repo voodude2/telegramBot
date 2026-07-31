@@ -14,6 +14,26 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction }) {
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setSelectedFile({
+        data: event.target.result.split(',')[1],
+        mimeType: file.type,
+        preview: event.target.result
+      });
+    };
+    reader.readAsDataURL(file);
+    // Reset input
+    e.target.value = null;
+  };
 
   const messagesEndRef = useRef(null);
 
@@ -42,7 +62,8 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction }) {
       id: `user_${Date.now()}`,
       text: messageText,
       sender: 'user',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      mediaPreview: selectedFile ? selectedFile.preview : null
     };
 
     setMessages(prev => [...prev, userMsg]);
@@ -55,9 +76,12 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: messageText,
-          sessionId: sessionId
+          sessionId: sessionId,
+          media: selectedFile ? { data: selectedFile.data, mimeType: selectedFile.mimeType } : undefined
         })
       });
+      
+      setSelectedFile(null);
 
       if (!response.ok) throw new Error('Network response was not ok');
       const data = await response.json();
@@ -159,6 +183,9 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction }) {
                       : 'bg-bg-card border border-border-glow text-gray-200 rounded-bl-none'
                   }`}
                 >
+                  {msg.mediaPreview && (
+                    <img src={msg.mediaPreview} alt="Uploaded" className="w-48 h-auto rounded-xl mb-2 object-cover border border-white/10" />
+                  )}
                   {msg.text}
                 </div>
                 <span className="text-[10px] text-text-muted mt-1 px-1">{msg.timestamp}</span>
@@ -197,31 +224,64 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction }) {
           )}
 
           {/* Input Footer */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSend();
-            }}
-            className="p-3 bg-bg-card border-t border-border-glow flex items-center space-x-2"
-          >
-            <input
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder="Ask anything about products..."
-              className="flex-1 bg-bg-dark border border-border-glow rounded-xl px-4 py-2.5 text-sm text-white placeholder-text-muted focus:outline-none focus:border-primary transition-colors"
-              disabled={loading}
-            />
-            <button
-              type="submit"
-              disabled={!inputValue.trim() || loading}
-              className="p-2.5 rounded-xl bg-gradient-to-r from-primary to-secondary text-white disabled:opacity-40 hover:opacity-90 active:scale-95 transition-all cursor-pointer flex-shrink-0"
+          <div className="flex flex-col bg-bg-card border-t border-border-glow">
+            {selectedFile && (
+              <div className="px-3 pt-3 flex items-center gap-2">
+                <div className="relative">
+                  <img src={selectedFile.preview} alt="Preview" className="w-16 h-16 object-cover rounded-lg border border-border-glow" />
+                  <button 
+                    onClick={() => setSelectedFile(null)}
+                    className="absolute -top-2 -right-2 bg-red-500 hover:bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-md"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSend();
+              }}
+              className="p-3 flex items-center space-x-2"
             >
+              <input 
+                type="file" 
+                accept="image/*" 
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                className="hidden" 
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading}
+                className="p-2.5 rounded-xl bg-bg-dark border border-border-glow text-text-muted hover:text-white transition-colors cursor-pointer"
+                title="Attach Photo"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+              </button>
+              <input
+                type="text"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder={selectedFile ? "Add a message..." : "Ask anything about products..."}
+                className="flex-1 bg-bg-dark border border-border-glow rounded-xl px-4 py-2.5 text-sm text-white placeholder-text-muted focus:outline-none focus:border-primary transition-colors"
+                disabled={loading}
+              />
+              <button
+                type="submit"
+                disabled={(!inputValue.trim() && !selectedFile) || loading}
+                className="p-2.5 rounded-xl bg-gradient-to-r from-primary to-secondary text-white disabled:opacity-40 hover:opacity-90 active:scale-95 transition-all cursor-pointer flex-shrink-0"
+              >
               <svg className="w-5 h-5 transform rotate-90" fill="currentColor" viewBox="0 0 20 20">
                 <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
               </svg>
             </button>
-          </form>
+            </form>
+          </div>
         </div>
       )}
     </>

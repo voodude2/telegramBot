@@ -123,7 +123,7 @@ app.get('/api/products/:id', async (req, res) => {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Core AI Chat Processing Engine (Shared by Web API and Telegram Bot)
-async function processAIChat({ sessionId, userMessage, platform = 'web' }) {
+async function processAIChat({ sessionId, userMessage, platform = 'web', media = null }) {
   let systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. Use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, FAQ, etc. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries. CRITICAL: The product database is in English. You MUST translate user product queries and categories to English BEFORE using the searchProducts tool. The ONLY valid categories are: Smartphone, Laptop, Audio, Wearable, Gaming, Tablet, TV, Drone, VR.`;
 
   if (platform === 'telegram') {
@@ -222,7 +222,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web' }) {
       
       let chat = model.startChat({ history: clonedHistory });
       
-      let result = await chat.sendMessage(userMessage);
+      let result = await chat.sendMessage(media ? [userMessage, media] : userMessage);
       
       let functionCalls = [];
       try {
@@ -376,12 +376,12 @@ async function processAIChat({ sessionId, userMessage, platform = 'web' }) {
 // Web API endpoint for Website AI Chat Widget
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, sessionId } = req.body;
-    if (!message) {
-      return res.status(400).json({ error: 'Message is required' });
+    const { message, sessionId, media } = req.body;
+    if (!message && !media) {
+      return res.status(400).json({ error: 'Message or media is required' });
     }
     const cleanSessionId = sessionId || 'web_default_session';
-    const result = await processAIChat({ sessionId: cleanSessionId, userMessage: message });
+    const result = await processAIChat({ sessionId: cleanSessionId, userMessage: message || "What is in this photo?", platform: 'web', media });
     res.json({ reply: result.reply, actions: result.actions });
   } catch (err) {
     console.error('❌ [API /api/chat] Error handling chat request:', err);
@@ -420,6 +420,76 @@ bot.on('text', async (ctx) => {
   } catch (error) {
     console.error('❌ [Telegram Bot] Error handling message:', error);
     await ctx.reply('Sorry, a technical error occurred. Please try again later. / ბოდიში, ტექნიკური შეცდომა მოხდა. გთხოვთ, სცადოთ მოგვიანებით.');
+  }
+});
+
+// Handler for photos
+bot.on('photo', async (ctx) => {
+  const chatId = `tg_${ctx.message.chat.id}`;
+  const userMessage = ctx.message.caption || "What is in this photo?";
+  
+  try {
+    const photo = ctx.message.photo[ctx.message.photo.length - 1]; // get highest resolution
+    const fileUrl = await ctx.telegram.getFileLink(photo.file_id);
+    const response = await fetch(fileUrl);
+    const buffer = await response.arrayBuffer();
+    const base64Data = Buffer.from(buffer).toString('base64');
+    
+    const media = {
+      inlineData: {
+        data: base64Data,
+        mimeType: 'image/jpeg'
+      }
+    };
+    
+    const result = await processAIChat({ sessionId: chatId, userMessage, platform: 'telegram', media });
+    let finalReply = result.reply;
+    
+    try {
+      await ctx.reply(finalReply, { parse_mode: 'Markdown' });
+    } catch (mdErr) {
+      console.warn(`⚠️ [Telegram] Markdown parse failed for photo, sending as plain text. Error: ${mdErr.message}`);
+      const plainText = finalReply.replace(/\*\*/g, '').replace(/\*/g, '').replace(/_/g, '').replace(/`/g, '');
+      await ctx.reply(plainText);
+    }
+  } catch (error) {
+    console.error('❌ [Telegram Bot] Error handling photo:', error);
+    await ctx.reply('Sorry, I had trouble processing this image. Please try again.');
+  }
+});
+
+// Handler for voice messages
+bot.on('voice', async (ctx) => {
+  const chatId = `tg_${ctx.message.chat.id}`;
+  const userMessage = "Listen to this voice message and respond accordingly.";
+  
+  try {
+    const voice = ctx.message.voice;
+    const fileUrl = await ctx.telegram.getFileLink(voice.file_id);
+    const response = await fetch(fileUrl);
+    const buffer = await response.arrayBuffer();
+    const base64Data = Buffer.from(buffer).toString('base64');
+    
+    const media = {
+      inlineData: {
+        data: base64Data,
+        mimeType: 'audio/ogg' // Telegram voice messages are typically ogg
+      }
+    };
+    
+    const result = await processAIChat({ sessionId: chatId, userMessage, platform: 'telegram', media });
+    let finalReply = result.reply;
+    
+    try {
+      await ctx.reply(finalReply, { parse_mode: 'Markdown' });
+    } catch (mdErr) {
+      console.warn(`⚠️ [Telegram] Markdown parse failed for voice, sending as plain text. Error: ${mdErr.message}`);
+      const plainText = finalReply.replace(/\*\*/g, '').replace(/\*/g, '').replace(/_/g, '').replace(/`/g, '');
+      await ctx.reply(plainText);
+    }
+  } catch (error) {
+    console.error('❌ [Telegram Bot] Error handling voice:', error);
+    await ctx.reply('Sorry, I had trouble understanding this voice message. Please try again.');
   }
 });
 
