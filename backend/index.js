@@ -283,17 +283,14 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
              searchResults = [];
            }
            
-           const functionResponseContent = {
-             role: 'user',
-             parts: [{
-               functionResponse: {
-                 name: 'searchProducts',
-                 response: { result: searchResults }
-               }
-             }]
-           };
+           const functionResponseParts = [{
+             functionResponse: {
+               name: 'searchProducts',
+               response: { result: searchResults }
+             }
+           }];
            try {
-             await handleStream(await chat.sendMessageStream(functionResponseContent));
+             await handleStream(await chat.sendMessageStream(functionResponseParts));
            } catch (mErr) {
              console.warn(`⚠️ [${sessionId}] Failed to send search follow-up:`, mErr.message);
              // Build fallback response from search results directly
@@ -314,17 +311,14 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
              console.error(`❌ [${sessionId}] Error finding policy:`, pErr.message);
            }
            
-           const functionResponseContent = {
-             role: 'user',
-             parts: [{
-               functionResponse: {
-                 name: 'askStorePolicy',
-                 response: { policy: policyResult || "No specific policy found for that topic." }
-               }
-             }]
-           };
+           const functionResponseParts = [{
+             functionResponse: {
+               name: 'askStorePolicy',
+               response: { policy: policyResult || "No specific policy found for that topic." }
+             }
+           }];
            try {
-             await handleStream(await chat.sendMessageStream(functionResponseContent));
+             await handleStream(await chat.sendMessageStream(functionResponseParts));
            } catch (mErr) {
              console.warn(`⚠️ [${sessionId}] Failed to send policy follow-up:`, mErr.message);
              if (policyResult) responseText = policyResult;
@@ -335,17 +329,14 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
            actions.push({ type: 'ADD_TO_CART', payload: call.args });
            console.log(`✅ [${sessionId}] addToCart action queued for product: ${call.args.productName}`);
            
-           const functionResponseContent = {
-             role: 'user',
-             parts: [{
-               functionResponse: {
-                 name: 'addToCart',
-                 response: { success: true, message: "Product successfully added to cart. Tell the user it has been added." }
-               }
-             }]
-           };
+           const functionResponseParts = [{
+             functionResponse: {
+               name: 'addToCart',
+               response: { success: true, message: "Product successfully added to cart. Tell the user it has been added." }
+             }
+           }];
            try {
-             await handleStream(await chat.sendMessageStream(functionResponseContent));
+             await handleStream(await chat.sendMessageStream(functionResponseParts));
            } catch (mErr) {
              console.warn(`⚠️ [${sessionId}] Failed to send addToCart follow-up:`, mErr.message);
              responseText = `✅ ${call.args.productName} has been added to your cart!`;
