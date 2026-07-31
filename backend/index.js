@@ -38,6 +38,13 @@ async function saveChatHistory(chatId, newHistory) {
   const historyKey = `chat_history:${chatId}`;
   if (newHistory.length > 40) {
     newHistory.splice(0, newHistory.length - 40);
+    // After generic truncation, ensure the new first element is a 'user' message
+    const firstUserIndex = newHistory.findIndex(msg => msg.role === 'user');
+    if (firstUserIndex > 0) {
+      newHistory.splice(0, firstUserIndex);
+    } else if (firstUserIndex === -1) {
+      newHistory.length = 0;
+    }
   }
   if (redis) {
     try {
@@ -194,6 +201,14 @@ async function processAIChat({ sessionId, userMessage }) {
       });
 
       const clonedHistory = JSON.parse(JSON.stringify(history));
+      // Sanitize history: Gemini SDK requires history to start with a 'user' role
+      const firstUserIdx = clonedHistory.findIndex(msg => msg.role === 'user');
+      if (firstUserIdx > 0) {
+        clonedHistory.splice(0, firstUserIdx);
+      } else if (firstUserIdx === -1) {
+        clonedHistory.length = 0;
+      }
+      
       let chat = model.startChat({ history: clonedHistory });
       
       let result = await chat.sendMessage(userMessage);
