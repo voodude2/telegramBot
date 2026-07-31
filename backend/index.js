@@ -117,7 +117,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Core AI Chat Processing Engine (Shared by Web API and Telegram Bot)
 async function processAIChat({ sessionId, userMessage }) {
-  const systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. Use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, FAQ, etc. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries.`;
+  const systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. Use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, FAQ, etc. Use the addToCart tool when a user explicitly wants to buy or add a product to their shopping cart. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries.`;
 
   const searchProductsTool = {
     functionDeclarations: [
@@ -151,6 +151,24 @@ async function processAIChat({ sessionId, userMessage }) {
           },
           required: ["query"]
         }
+      },
+      {
+        name: "addToCart",
+        description: "Add a specific product to the user's shopping cart. Use this when the user explicitly asks to buy or add a product to their cart.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            productId: {
+              type: "NUMBER",
+              description: "The ID of the product to add to the cart."
+            },
+            productName: {
+              type: "STRING",
+              description: "The name of the product being added."
+            }
+          },
+          required: ["productId", "productName"]
+        }
       }
     ]
   };
@@ -160,6 +178,7 @@ async function processAIChat({ sessionId, userMessage }) {
   // Supported Gemini models with fallbacks for maximum reliability
   const candidateModels = ['gemini-2.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash', 'gemini-1.5-pro-latest'];
   let responseText = '';
+  let actions = [];
   let lastError = null;
   let searchResults = null;
   let policyResult = null;
@@ -222,6 +241,22 @@ async function processAIChat({ sessionId, userMessage }) {
               console.warn('Failed to send policy follow-up message:', mErr);
             }
          }
+         else if (call.name === 'addToCart') {
+            console.log(`🤖 [${sessionId}] Model called addToCart with args:`, call.args);
+            actions.push({ type: 'ADD_TO_CART', payload: call.args });
+            
+            const functionResponseParts = [{
+              functionResponse: {
+                name: 'addToCart',
+                response: { success: true, message: "Product successfully added to cart. Tell the user it has been added." }
+              }
+            }];
+            try {
+              result = await chat.sendMessage(functionResponseParts);
+            } catch (mErr) {
+              console.warn('Failed to send addToCart follow-up message:', mErr);
+            }
+         }
       }
 
       try {
@@ -263,15 +298,15 @@ async function processAIChat({ sessionId, userMessage }) {
   // Final Graceful Error Fallback (Prevents 500 crashes or empty responses)
   if (!responseText || responseText.trim() === '') {
     if (policyResult) {
-      return policyResult;
+      return { reply: policyResult, actions };
     }
     if (lastError) {
       console.error(`❌ [processAIChat] All candidate models failed. Final error:`, lastError);
     }
-    return "I am experiencing a temporary connection hiccup with the AI server, but I am still here to assist you! Please try asking your question again.";
+    return { reply: "I am experiencing a temporary connection hiccup with the AI server, but I am still here to assist you! Please try asking your question again.", actions };
   }
 
-  return responseText;
+  return { reply: responseText, actions };
 }
 
 // Web API endpoint for Website AI Chat Widget
@@ -282,8 +317,8 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
     const cleanSessionId = sessionId || 'web_default_session';
-    const reply = await processAIChat({ sessionId: cleanSessionId, userMessage: message });
-    res.json({ reply });
+    const result = await processAIChat({ sessionId: cleanSessionId, userMessage: message });
+    res.json({ reply: result.reply, actions: result.actions });
   } catch (err) {
     console.error('❌ [API /api/chat] Error handling chat request:', err);
     res.status(500).json({ error: 'Failed to process AI chat request' });
@@ -302,8 +337,18 @@ bot.on('text', async (ctx) => {
   const userMessage = ctx.message.text;
 
   try {
-    const responseText = await processAIChat({ sessionId: chatId, userMessage });
-    await ctx.reply(responseText);
+    const result = await processAIChat({ sessionId: chatId, userMessage });
+    let finalReply = result.reply;
+    
+    // Fallback for Telegram users since they don't have a UI cart
+    if (result.actions && result.actions.length > 0) {
+      const cartActions = result.actions.filter(a => a.type === 'ADD_TO_CART');
+      if (cartActions.length > 0) {
+        finalReply += "\n\n🛒 _I've prepared these items for your cart! (Since you're on Telegram, this is just a virtual confirmation)._";
+      }
+    }
+    
+    await ctx.reply(finalReply, { parse_mode: 'Markdown' });
   } catch (error) {
     console.error('❌ [Telegram Bot] Error handling message:', error);
     await ctx.reply('Sorry, a technical error occurred. Please try again later. / ბოდიში, ტექნიკური შეცდომა მოხდა. გთხოვთ, სცადოთ მოგვიანებით.');

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
-export default function AIChatWidget({ isOpen, setIsOpen }) {
+export default function AIChatWidget({ isOpen, setIsOpen, onAction }) {
   const [messages, setMessages] = useState([
     {
       id: 'welcome',
@@ -61,6 +61,12 @@ export default function AIChatWidget({ isOpen, setIsOpen }) {
 
       if (!response.ok) throw new Error('Network response was not ok');
       const data = await response.json();
+
+      if (data.actions && data.actions.length > 0 && onAction) {
+        data.actions.forEach(action => {
+          onAction(action);
+        });
+      }
 
       const aiMsg = {
         id: `ai_${Date.now()}`,

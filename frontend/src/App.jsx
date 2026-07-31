@@ -58,6 +58,15 @@ export default function App() {
     setIsCartOpen(true);
   };
 
+  const handleChatAction = (action) => {
+    if (action.type === 'ADD_TO_CART' && action.payload && action.payload.productId) {
+      const product = products.find(p => p.id === action.payload.productId);
+      if (product) {
+        handleAddToCart(product);
+      }
+    }
+  };
+
   const removeFromCart = (id) => {
     setCartItems(prev => prev.filter(item => item.id !== id));
   };
@@ -231,6 +240,7 @@ export default function App() {
       <AIChatWidget 
         isOpen={isAIChatOpen} 
         setIsOpen={setIsAIChatOpen} 
+        onAction={handleChatAction}
       />
     </div>
   );
