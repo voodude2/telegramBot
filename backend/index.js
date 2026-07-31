@@ -228,10 +228,14 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
 
       const handleStream = async (streamResult) => {
         for await (const chunk of streamResult.stream) {
-          if (chunk.functionCalls && chunk.functionCalls().length > 0) {
-            functionCalls = chunk.functionCalls();
-            continue;
-          }
+          try {
+            const fcs = chunk.functionCalls ? chunk.functionCalls() : [];
+            if (fcs && fcs.length > 0) {
+              functionCalls = fcs;
+              continue;
+            }
+          } catch(e) {}
+          
           try {
             const text = chunk.text();
             if (text) {
@@ -244,9 +248,12 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
         }
         result = await streamResult.response;
         // fallback to check function calls on final response just in case
-        if (!functionCalls.length && result.functionCalls && result.functionCalls().length > 0) {
-          functionCalls = result.functionCalls();
-        }
+        try {
+          const finalFcs = result.functionCalls ? result.functionCalls() : [];
+          if (!functionCalls.length && finalFcs && finalFcs.length > 0) {
+            functionCalls = finalFcs;
+          }
+        } catch(e) {}
       };
       
       let messagePayload = userMessage;
@@ -276,14 +283,17 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
              searchResults = [];
            }
            
-           const functionResponseParts = [{
-             functionResponse: {
-               name: 'searchProducts',
-               response: { result: searchResults }
-             }
-           }];
+           const functionResponseContent = {
+             role: 'user',
+             parts: [{
+               functionResponse: {
+                 name: 'searchProducts',
+                 response: { result: searchResults }
+               }
+             }]
+           };
            try {
-             await handleStream(await chat.sendMessageStream(functionResponseParts));
+             await handleStream(await chat.sendMessageStream(functionResponseContent));
            } catch (mErr) {
              console.warn(`⚠️ [${sessionId}] Failed to send search follow-up:`, mErr.message);
              // Build fallback response from search results directly
@@ -304,14 +314,17 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
              console.error(`❌ [${sessionId}] Error finding policy:`, pErr.message);
            }
            
-           const functionResponseParts = [{
-             functionResponse: {
-               name: 'askStorePolicy',
-               response: { policy: policyResult || "No specific policy found for that topic." }
-             }
-           }];
+           const functionResponseContent = {
+             role: 'user',
+             parts: [{
+               functionResponse: {
+                 name: 'askStorePolicy',
+                 response: { policy: policyResult || "No specific policy found for that topic." }
+               }
+             }]
+           };
            try {
-             await handleStream(await chat.sendMessageStream(functionResponseParts));
+             await handleStream(await chat.sendMessageStream(functionResponseContent));
            } catch (mErr) {
              console.warn(`⚠️ [${sessionId}] Failed to send policy follow-up:`, mErr.message);
              if (policyResult) responseText = policyResult;
@@ -322,14 +335,17 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
            actions.push({ type: 'ADD_TO_CART', payload: call.args });
            console.log(`✅ [${sessionId}] addToCart action queued for product: ${call.args.productName}`);
            
-           const functionResponseParts = [{
-             functionResponse: {
-               name: 'addToCart',
-               response: { success: true, message: "Product successfully added to cart. Tell the user it has been added." }
-             }
-           }];
+           const functionResponseContent = {
+             role: 'user',
+             parts: [{
+               functionResponse: {
+                 name: 'addToCart',
+                 response: { success: true, message: "Product successfully added to cart. Tell the user it has been added." }
+               }
+             }]
+           };
            try {
-             await handleStream(await chat.sendMessageStream(functionResponseParts));
+             await handleStream(await chat.sendMessageStream(functionResponseContent));
            } catch (mErr) {
              console.warn(`⚠️ [${sessionId}] Failed to send addToCart follow-up:`, mErr.message);
              responseText = `✅ ${call.args.productName} has been added to your cart!`;
