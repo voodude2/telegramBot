@@ -38,11 +38,13 @@ async function saveChatHistory(chatId, newHistory) {
   const historyKey = `chat_history:${chatId}`;
   if (newHistory.length > 40) {
     newHistory.splice(0, newHistory.length - 40);
-    // After generic truncation, ensure the new first element is a 'user' message
-    const firstUserIndex = newHistory.findIndex(msg => msg.role === 'user');
-    if (firstUserIndex > 0) {
-      newHistory.splice(0, firstUserIndex);
-    } else if (firstUserIndex === -1) {
+    // After generic truncation, ensure the new first element is a 'user' message that is NOT a functionResponse
+    const firstValidIndex = newHistory.findIndex(msg => 
+      msg.role === 'user' && (!msg.parts || !msg.parts.some(p => p.functionResponse))
+    );
+    if (firstValidIndex > 0) {
+      newHistory.splice(0, firstValidIndex);
+    } else if (firstValidIndex === -1) {
       newHistory.length = 0;
     }
   }
@@ -202,7 +204,22 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
 
   let history = await getChatHistory(sessionId) || [];
 
-  // Sanitize history: remove dangling function calls at the end
+  // Sanitize history:
+  // 1. Remove orphaned functionResponses at the start (caused by naive history truncation)
+  while (history.length > 0) {
+    const firstMsg = history[0];
+    if (firstMsg.role === 'user' && firstMsg.parts && firstMsg.parts.some(p => p.functionResponse)) {
+      history.shift();
+      console.warn(`⚠️ [${sessionId}] Removed orphaned functionResponse at the START of history to prevent API 400 error.`);
+    } else if (firstMsg.role === 'model') {
+      history.shift();
+      console.warn(`⚠️ [${sessionId}] Removed model message at the START of history (history must start with user).`);
+    } else {
+      break;
+    }
+  }
+
+  // 2. Remove dangling functionCalls at the end (caused by API crashes)
   while (history.length > 0) {
     const lastMsg = history[history.length - 1];
     if (lastMsg.role === 'model' && lastMsg.parts && lastMsg.parts.some(p => p.functionCall)) {
