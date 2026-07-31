@@ -200,7 +200,18 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
     functionDeclarations: baseTools
   };
 
-  let history = await getChatHistory(sessionId);
+  let history = await getChatHistory(sessionId) || [];
+
+  // Sanitize history: remove dangling function calls at the end
+  while (history.length > 0) {
+    const lastMsg = history[history.length - 1];
+    if (lastMsg.role === 'model' && lastMsg.parts && lastMsg.parts.some(p => p.functionCall)) {
+      history.pop();
+      console.warn(`⚠️ [${sessionId}] Removed dangling functionCall from history to prevent API 400 error.`);
+    } else {
+      break;
+    }
+  }
 
   // Primary: Gemini 3.1 Flash-Lite with robust fallbacks for continuous availability
   const candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash'];
