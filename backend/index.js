@@ -3,7 +3,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const express = require('express');
 const cors = require('cors');
 const { Telegraf } = require('telegraf');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const { getProducts, getProductById } = require('./services/googleSheets');
 const { initializeRAG, findRelevantPolicy } = require('./services/ragService');
 const { Redis } = require('@upstash/redis');
@@ -127,17 +127,17 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
-// Setup Google Generative AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Setup Google GenAI
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Core AI Chat Processing Engine (Shared by Web API and Telegram Bot)
 async function processAIChat({ sessionId, userMessage, platform = 'web', media = null, onChunk = null }) {
-  let systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. ALWAYS use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, delivery, warranty, location, or FAQ. CRITICAL: If the user asks about shipping or delivery in Georgian (e.g., 'შიფინგი', 'მიტანა', 'ჩამოტანა', 'გარანტია', 'მისამართი'), you MUST use the askStorePolicy tool! Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. NEVER apologize under any circumstances. If you made a mistake, just correct it silently. Do not use phrases like 'ბოდიშს გიხდით', 'ბოდიში', or 'შეცდომა გაიპარა'. Be direct and concise. NEVER ask for permission to search for a product or add an item to the cart—just use your tools immediately. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries. CRITICAL: The product database is in English. You MUST translate user product queries and categories to English BEFORE using the searchProducts tool. The ONLY valid categories are: Smartphone, Laptop, Audio, Wearable, Gaming, Tablet, TV, Drone, VR. CRITICAL MULTI-STEP RULE: If a user asks to add an item to their cart, FIRST call 'searchProducts'. Once you receive the search results, you MUST IMMEDIATELY call 'addToCart' in the exact same turn using the product ID. DO NOT ask the user for confirmation after searching. Just call addToCart directly!`;
+  let systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. ALWAYS use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, delivery, warranty, location, or FAQ. CRITICAL: If the user asks about shipping or delivery in Georgian (e.g., 'შიფინგი', 'მიტანა', 'ჩამოტანა', 'გარანტია', 'მისამართი'), you MUST use the askStorePolicy tool! CRITICAL: If the backing store policy is in a different language than the user's input, you MUST silently translate the retrieved policy into the user's language before presenting the answer. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. NEVER apologize under any circumstances. If you made a mistake, just correct it silently. Do not use phrases like 'ბოდიშს გიხდით', 'ბოდიში', or 'შეცდომა გაიპარა'. Be direct and concise. NEVER ask for permission to search for a product or add an item to the cart—just use your tools immediately. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries. CRITICAL: The product database is in English. You MUST translate user product queries and categories to English BEFORE using the searchProducts tool. The ONLY valid categories are: Smartphone, Laptop, Audio, Wearable, Gaming, Tablet, TV, Drone, VR.`;
 
   if (platform === 'telegram') {
-    systemInstruction += ` CRITICAL: The user is chatting with you on Telegram where there is no shopping cart. DO NOT attempt to add items to a cart. If the user asks to buy or add an item to their cart, politely instruct them to visit our website (TechStore.com) to complete their purchase.`;
+    systemInstruction += ` CRITICAL: The user is chatting with you on Telegram. DO NOT attempt to add items to a cart. If the user asks to buy or add an item to their cart, politely instruct them to visit our website (TechStore.com). IMPORTANT: You MUST strictly format your response using Telegram-safe HTML or rigorously validated MarkdownV2. Do NOT use unescaped special characters.`;
   } else {
-    systemInstruction += ` Use the addToCart tool when a user explicitly wants to buy or add a product to their shopping cart. ALWAYS use the addToCart tool if the user asks to add a product, even if they have already added it before in the conversation history. Do not assume the cart state from history, just add it.`;
+    systemInstruction += ` Use the addToCart tool when a user explicitly wants to buy or add a product to their shopping cart.`;
   }
 
   const baseTools = [
@@ -213,87 +213,60 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
   for (const modelName of candidateModels) {
     try {
       console.log(`🔄 [${sessionId}] Trying model: ${modelName}`);
-      const model = genAI.getGenerativeModel({
+      
+      const chat = ai.chats.create({
         model: modelName,
-        systemInstruction: systemInstruction,
-        tools: [aiTools],
+        config: {
+          systemInstruction: systemInstruction,
+          tools: [{ functionDeclarations: baseTools }]
+        },
+        history: history || []
       });
-
-      const clonedHistory = JSON.parse(JSON.stringify(history));
-      let sanitizedHistory = clonedHistory.map(msg => {
-        let newParts = msg.parts.map(p => {
-          if (p.functionCall) {
-            return { text: `[Action Taken]: I used the tool '${p.functionCall.name}' with arguments: ${JSON.stringify(p.functionCall.args)}.` };
-          }
-          if (p.functionResponse) {
-            return { text: `[Tool Result for '${p.functionResponse.name}']: ${JSON.stringify(p.functionResponse.response)}` };
-          }
-          return p;
-        });
-        return { role: msg.role === 'function' ? 'user' : msg.role, parts: newParts };
-      });
-      // Sanitize history: Gemini SDK requires history to start with a 'user' role
-      const firstUserIdx = sanitizedHistory.findIndex(msg => msg.role === 'user');
-      if (firstUserIdx > 0) {
-        sanitizedHistory.splice(0, firstUserIdx);
-      } else if (firstUserIdx === -1) {
-        sanitizedHistory.length = 0;
-      }
       
-      let chat = model.startChat({ history: sanitizedHistory });
-      
-      let result;
       let functionCalls = [];
       responseText = "";
 
       const handleStream = async (streamResult) => {
         functionCalls = [];
-        for await (const chunk of streamResult.stream) {
-          try {
-            const fcs = chunk.functionCalls ? chunk.functionCalls() : [];
-            if (fcs && fcs.length > 0) {
-              functionCalls = fcs;
-              continue;
-            }
-          } catch(e) {}
-          
-          try {
-            const text = chunk.text();
-            if (text) {
-              responseText += text;
-              if (onChunk) onChunk(text);
-            }
-          } catch (e) {
-            // chunk.text() throws if it's a function call without text
+        for await (const chunk of streamResult) {
+          if (chunk.text) {
+            responseText += chunk.text;
+            if (onChunk) onChunk(chunk.text);
+          }
+          if (chunk.functionCalls) {
+            functionCalls = functionCalls.concat(chunk.functionCalls);
           }
         }
-        result = await streamResult.response;
-        // fallback to check function calls on final response just in case
-        try {
-          const finalFcs = result.functionCalls ? result.functionCalls() : [];
-          if (!functionCalls.length && finalFcs && finalFcs.length > 0) {
-            functionCalls = finalFcs;
-          }
-        } catch(e) {}
       };
       
       let messagePayload = userMessage;
       if (media) {
         const inlineData = media.inlineData || media;
         messagePayload = [
-          userMessage, // String is fine here in the array, SDK will cast it to { text: '...' }
+          userMessage,
           { inlineData: { data: inlineData.data, mimeType: inlineData.mimeType } }
         ];
       }
       
       await handleStream(await chat.sendMessageStream(messagePayload));
       
-      // Process up to 3 rounds of sequential tool calls (handles multi-step tool usage)
+      // Process up to 5 rounds of sequential tool calls
       let toolRound = 0;
-      while (functionCalls && functionCalls.length > 0 && toolRound < 3) {
+      while (functionCalls && functionCalls.length > 0 && toolRound < 5) {
         toolRound++;
-        const call = functionCalls[0];
+        const call = functionCalls[0]; // GenAI models generally return 1 call at a time for this flow
         console.log(`🤖 [${sessionId}] Round ${toolRound}: Model called ${call.name} with args:`, call.args);
+        
+        let functionResponsePart = {
+          functionResponse: {
+            name: call.name,
+            response: {}
+          }
+        };
+        // Some SDK versions still expect the call ID
+        if (call.id) {
+          functionResponsePart.functionResponse.id = call.id;
+        }
          
         if (call.name === 'searchProducts') {
            try {
@@ -304,29 +277,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
              searchResults = [];
            }
            const minimalResults = searchResults.map(p => ({ id: p.id, name: p.name, price: p.price, inStock: p.inStock }));
-           const functionResponseParts = [{
-             functionResponse: {
-               id: call.id,
-               name: 'searchProducts',
-               response: { 
-                 result: minimalResults,
-                 instruction: "Here are the search results. If the user explicitly asked to add an item to the cart, YOU MUST CALL the 'addToCart' tool NOW using the exact product ID. You are allowed to output a brief message like 'Adding to cart...' while calling the tool so you don't freeze."
-               }
-             }
-           }];
-           try {
-             await handleStream(await chat.sendMessageStream(functionResponseParts));
-           } catch (mErr) {
-             console.warn(`⚠️ [${sessionId}] Failed to send search follow-up:`, mErr.message);
-             // Build fallback response from search results directly
-             if (searchResults && searchResults.length > 0) {
-               responseText = "Here are the matching items found in our live inventory:\n\n" + 
-                 searchResults.map(p => `• **${p.name}** - $${p.price} (${p.inStock ? 'In Stock' : 'Out of Stock'})\n  _${p.description}_`).join('\n\n');
-             } else {
-               responseText = "We currently don't have exact matches in stock for that item. Feel free to ask about our smartphones, laptops, audio gear, or accessories!";
-             }
-             break;
-           }
+           functionResponsePart.functionResponse.response = { result: minimalResults };
         } 
         else if (call.name === 'askStorePolicy') {
            try {
@@ -336,65 +287,33 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
              console.error(`❌ [${sessionId}] Error finding policy:`, pErr.message);
            }
            
-           const functionResponseParts = [{
-             functionResponse: {
-               id: call.id,
-               name: 'askStorePolicy',
-               response: { policy: policyResult || "No specific policy found for that topic." }
-             }
-           }];
+           let policyObj = {};
            try {
-             await handleStream(await chat.sendMessageStream(functionResponseParts));
-           } catch (mErr) {
-             console.warn(`⚠️ [${sessionId}] Failed to send policy follow-up:`, mErr.message);
-             if (policyResult) responseText = policyResult;
-             break;
+             policyObj = JSON.parse(policyResult);
+           } catch(e) {
+             policyObj = { policy: policyResult || "No specific policy found for that topic." };
            }
+           functionResponsePart.functionResponse.response = policyObj;
         }
         else if (call.name === 'addToCart') {
            actions.push({ type: 'ADD_TO_CART', payload: call.args });
            console.log(`✅ [${sessionId}] addToCart action queued for product: ${call.args.productName}`);
-           
-           const functionResponseParts = [{
-             functionResponse: {
-               id: call.id,
-               name: 'addToCart',
-               response: { success: true, message: "CRITICAL: Product successfully added to cart. You MUST say exactly '✅ პროდუქტი დამატებულია კალათაში!' or '✅ Product added to cart!' and absolutely NOTHING ELSE. DO NOT ask any questions. DO NOT apologize." }
-             }
-           }];
-           try {
-             await handleStream(await chat.sendMessageStream(functionResponseParts));
-           } catch (mErr) {
-             console.warn(`⚠️ [${sessionId}] Failed to send addToCart follow-up:`, mErr.message);
-             responseText = `✅ ${call.args.productName} has been added to your cart!`;
-             break;
-           }
+           functionResponsePart.functionResponse.response = { success: true, message: "Product successfully added to cart." };
         }
         else {
            console.warn(`⚠️ [${sessionId}] Unknown function call: ${call.name}`);
-           break;
+           functionResponsePart.functionResponse.response = { error: "Unknown function" };
         }
 
-      }
-
-      // Extract text response
-      try {
-        if (result && result.response) {
-          responseText = responseText || result.response.text();
+        try {
+          await handleStream(await chat.sendMessageStream([functionResponsePart]));
+        } catch (mErr) {
+          console.warn(`⚠️ [${sessionId}] Failed to send follow-up:`, mErr.message);
+          break;
         }
-      } catch (e) {
-        console.warn(`⚠️ [${sessionId}] Could not extract text from response:`, e.message);
-        // Don't overwrite responseText if we already have a fallback
       }
 
       // Graceful Fallback if model response text is empty after tool execution
-      if (!responseText) {
-        try {
-          responseText = result.response ? result.response.text() : "";
-        } catch (e) {
-          // ignore
-        }
-      }
       if (!responseText || responseText.trim() === '') {
         if (policyResult) {
           responseText = policyResult;

@@ -1,9 +1,7 @@
 const { JWT } = require('google-auth-library');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 
-// We use the embedding model to convert text to vectors
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const embeddingModel = genAI.getGenerativeModel({ model: 'gemini-embedding-2' });
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // In-memory array to store our pre-computed policy embeddings
 // Format: [ { question: string, answer: string, embedding: number[] } ]
@@ -32,11 +30,14 @@ function cosineSimilarity(vecA, vecB) {
  */
 async function generateEmbeddings(text) {
   try {
-    const result = await embeddingModel.embedContent(text);
-    return result.embedding.values;
+    const response = await ai.models.embedContent({
+      model: 'gemini-embedding-001',
+      contents: text,
+    });
+    return response.embeddings[0].values;
   } catch (error) {
     console.error("❌ Error generating embedding:", error.message);
-    return null;
+    throw new Error("Failed to generate embedding");
   }
 }
 
@@ -104,18 +105,22 @@ async function initializeRAG() {
     return;
   }
 
-  for (const policy of rawPolicies) {
-    // Embed the question (and optionally the answer context) so it matches user queries better
-    const textToEmbed = `Question: ${policy.question}\nAnswer: ${policy.answer}`;
-    const embedding = await generateEmbeddings(textToEmbed);
-    
-    if (embedding) {
+  try {
+    for (const policy of rawPolicies) {
+      // Embed the question (and optionally the answer context) so it matches user queries better
+      const textToEmbed = `Question: ${policy.question}\nAnswer: ${policy.answer}`;
+      const embedding = await generateEmbeddings(textToEmbed);
+      
       policyKnowledgeBase.push({
         question: policy.question,
         answer: policy.answer,
         embedding: embedding
       });
     }
+  } catch (error) {
+    console.error("❌ Fatal error during RAG initialization. Aborting policy loading.", error.message);
+    policyKnowledgeBase = [];
+    return;
   }
   
   console.log(`✅ [RAG] Initialized ${policyKnowledgeBase.length} policies with embeddings.`);
@@ -132,12 +137,14 @@ async function initializeRAG() {
  */
 async function findRelevantPolicy(userQuery) {
   if (policyKnowledgeBase.length === 0) {
-    return "I couldn't check the store policies right now because the policy database is empty.";
+    return JSON.stringify({ error: "No relevant policy found" });
   }
 
-  const queryEmbedding = await generateEmbeddings(userQuery);
-  if (!queryEmbedding) {
-    return "I encountered a technical issue while searching the policies. Please ask a human agent.";
+  let queryEmbedding;
+  try {
+    queryEmbedding = await generateEmbeddings(userQuery);
+  } catch (error) {
+    return JSON.stringify({ error: "No relevant policy found" });
   }
 
   let bestMatch = null;
@@ -158,7 +165,7 @@ async function findRelevantPolicy(userQuery) {
     return `Relevant Policy found:\nQ: ${bestMatch.question}\nA: ${bestMatch.answer}`;
   } else {
     console.log(`🔍 [RAG] No policy matched strongly enough. Highest score was ${(highestScore*100).toFixed(1)}%`);
-    return "I couldn't find a specific store policy related to your question.";
+    return JSON.stringify({ error: "No relevant policy found" });
   }
 }
 
