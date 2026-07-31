@@ -248,7 +248,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
         ];
       }
       
-      await handleStream(await chat.sendMessageStream(messagePayload));
+      await handleStream(await chat.sendMessageStream({ message: messagePayload }));
       
       // Process up to 5 rounds of sequential tool calls
       let toolRound = 0;
@@ -306,7 +306,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
         }
 
         try {
-          await handleStream(await chat.sendMessageStream([functionResponsePart]));
+          await handleStream(await chat.sendMessageStream({ message: [functionResponsePart] }));
         } catch (mErr) {
           console.warn(`⚠️ [${sessionId}] Failed to send follow-up:`, mErr.message);
           break;
