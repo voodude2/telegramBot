@@ -132,7 +132,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Core AI Chat Processing Engine (Shared by Web API and Telegram Bot)
 async function processAIChat({ sessionId, userMessage, platform = 'web', media = null, onChunk = null }) {
-  let systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. Use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, FAQ, etc. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. NEVER apologize under any circumstances. If you made a mistake, just correct it silently. Do not use phrases like 'ბოდიშს გიხდით', 'ბოდიში', or 'შეცდომა გაიპარა'. Be direct and concise. NEVER ask for permission to search for a product or add an item to the cart—just use your tools immediately. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries. CRITICAL: The product database is in English. You MUST translate user product queries and categories to English BEFORE using the searchProducts tool. The ONLY valid categories are: Smartphone, Laptop, Audio, Wearable, Gaming, Tablet, TV, Drone, VR.`;
+  let systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. Use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, FAQ, etc. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. NEVER apologize under any circumstances. If you made a mistake, just correct it silently. Do not use phrases like 'ბოდიშს გიხდით', 'ბოდიში', or 'შეცდომა გაიპარა'. Be direct and concise. NEVER ask for permission to search for a product or add an item to the cart—just use your tools immediately. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries. CRITICAL: The product database is in English. You MUST translate user product queries and categories to English BEFORE using the searchProducts tool. The ONLY valid categories are: Smartphone, Laptop, Audio, Wearable, Gaming, Tablet, TV, Drone, VR. CRITICAL MULTI-STEP RULE: If a user asks to add an item to their cart, FIRST call 'searchProducts'. Once you receive the search results, you MUST IMMEDIATELY call 'addToCart' in the exact same turn using the product ID. DO NOT ask the user for confirmation after searching. Just call addToCart directly!`;
 
   if (platform === 'telegram') {
     systemInstruction += ` CRITICAL: The user is chatting with you on Telegram where there is no shopping cart. DO NOT attempt to add items to a cart. If the user asks to buy or add an item to their cart, politely instruct them to visit our website (TechStore.com) to complete their purchase.`;
@@ -306,6 +306,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
            const minimalResults = searchResults.map(p => ({ id: p.id, name: p.name, price: p.price, inStock: p.inStock }));
            const functionResponseParts = [{
              functionResponse: {
+               id: call.id,
                name: 'searchProducts',
                response: { 
                  result: minimalResults,
@@ -337,6 +338,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
            
            const functionResponseParts = [{
              functionResponse: {
+               id: call.id,
                name: 'askStorePolicy',
                response: { policy: policyResult || "No specific policy found for that topic." }
              }
@@ -355,6 +357,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
            
            const functionResponseParts = [{
              functionResponse: {
+               id: call.id,
                name: 'addToCart',
                response: { success: true, message: "CRITICAL: Product successfully added to cart. You MUST say exactly '✅ პროდუქტი დამატებულია კალათაში!' or '✅ Product added to cart!' and absolutely NOTHING ELSE. DO NOT ask any questions. DO NOT apologize." }
              }
