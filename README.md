@@ -9,12 +9,12 @@ A modern, AI-powered e-commerce platform featuring a fully functional frontend s
 ## ✨ Key Features
 
 * **Omnichannel AI Consultant**: Seamlessly interact with the AI assistant via Telegram or directly on the e-commerce website.
-* **Real-time Inventory Search**: The AI can execute live searches against the store's product database to recommend in-stock items with pricing.
-* **RAG-Powered Policy Engine**: Uses Google Gemini Vector Embeddings to understand and answer store policy questions (returns, shipping, FAQs) backed by a Google Sheet database.
-* **Multi-Language Support**: The AI automatically detects and responds in the user's native language.
-* **Persistent Chat Memory**: Conversations are remembered across sessions using Upstash Redis (with seamless in-memory fallback).
+* **Real-time Inventory Search**: The AI can execute live searches against the store's product database to recommend items with pricing and stock availability (utilizing a 30-second cache to balance speed and API quotas).
+* **Robust Multi-Step Tool Calling**: Built on the official `@google/genai` SDK, the bot can seamlessly chain tools (e.g., searching for a product, then immediately adding it to the cart) within a single turn.
+* **RAG-Powered Policy Engine**: Uses Google Gemini Vector Embeddings (`text-embedding-004`) to understand and answer store policy questions (returns, shipping, FAQs) backed by a Google Sheet database.
+* **Resilient Multi-Model Fallback**: Automatically cascades through `gemini-3.1-flash-lite`, `gemini-2.0-flash`, and `gemini-1.5-flash` to ensure continuous availability even if one model hits a rate limit or API error.
+* **Self-Healing Chat Memory**: Conversations are remembered across sessions using Upstash Redis. The backend automatically sanitizes history (cleaning up orphaned function calls/responses) to prevent `400 Bad Request` errors.
 * **Modern Web Storefront**: A sleek, responsive e-commerce UI built with React, Vite, and Tailwind CSS.
-* **Graceful Error Handling**: Resilient AI generation with fallback mechanisms to ensure a smooth user experience even during API latency.
 
 ---
 
@@ -27,7 +27,7 @@ A modern, AI-powered e-commerce platform featuring a fully functional frontend s
 
 ### Backend
 * **Environment**: Node.js & Express
-* **AI Engine**: Google Generative AI (`@google/generative-ai` - Gemini 1.5 Flash / Flash-8B)
+* **AI Engine**: Official Google Gen AI SDK (`@google/genai`)
 * **Bot Framework**: Telegraf (Telegram Bot API)
 * **Database (Products & RAG)**: Google Sheets API
 * **Caching / Memory**: Upstash Redis (Serverless Redis)
@@ -39,7 +39,7 @@ A modern, AI-powered e-commerce platform featuring a fully functional frontend s
 ```text
 telegram-ai-agent/
 ├── backend/                  # Node.js backend server and Telegram bot
-│   ├── index.js              # Main Express server and Telegraf initialization
+│   ├── index.js              # Main Express server, Telegraf init, and AI Loop
 │   ├── services/
 │   │   ├── googleSheets.js   # Fetches live product inventory from Google Sheets
 │   │   └── ragService.js     # Manages Vector Embeddings and RAG policy lookup
@@ -120,6 +120,7 @@ The project is fully prepared for containerized deployment (e.g., on Render, Her
 3. Use `npm install` for the Build Command and `npm start` for the Start Command.
 4. (Optional) Alternatively, use the provided `Dockerfile`.
 5. Add all the environment variables in the Render Dashboard.
+*Note: During Zero-Downtime deployments on Render, you may temporarily see a `409 Conflict` error in logs as the old instance shuts down while the new one connects to Telegram.*
 
 ### Frontend (Static Site)
 1. Deploy the `frontend` folder to Vercel, Netlify, or Render Static Sites.
@@ -130,7 +131,7 @@ The project is fully prepared for containerized deployment (e.g., on Render, Her
 ## 🧠 How the RAG Pipeline Works
 
 1. **Initialization**: On server startup, `ragService.js` downloads the `FAQ_Policies` tab from your connected Google Sheet.
-2. **Embedding**: Each Q/A pair is converted into a 768-dimensional mathematical vector using Google's `text-embedding-004` (or `gemini-embedding-2`) model.
+2. **Embedding**: Each Q/A pair is converted into a 768-dimensional mathematical vector using Google's `text-embedding-004` model.
 3. **Retrieval**: When a user asks a policy-related question, the AI triggers the `askStorePolicy` tool. The user's query is embedded, and a cosine similarity search finds the closest matching policy in memory.
 4. **Generation**: The matched policy is fed back to the Gemini model in a strict `functionResponse` format, allowing the AI to generate a natural, conversational answer based on actual store rules.
 
