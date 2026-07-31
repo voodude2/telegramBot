@@ -3,7 +3,7 @@ const { JWT } = require('google-auth-library');
 // In-memory cache setup
 let cacheData = null;
 let lastFetchTime = 0;
-const CACHE_TTL = 15 * 1000; // 15 seconds cache
+const CACHE_TTL = 300 * 1000; // 5 minutes cache
 
 /**
  * Fetches products from Google Sheet.
