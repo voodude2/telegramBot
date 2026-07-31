@@ -123,7 +123,7 @@ app.get('/api/products/:id', async (req, res) => {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Core AI Chat Processing Engine (Shared by Web API and Telegram Bot)
-async function processAIChat({ sessionId, userMessage, platform = 'web', media = null }) {
+async function processAIChat({ sessionId, userMessage, platform = 'web', media = null, onChunk = null }) {
   let systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. Use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, FAQ, etc. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries. CRITICAL: The product database is in English. You MUST translate user product queries and categories to English BEFORE using the searchProducts tool. The ONLY valid categories are: Smartphone, Laptop, Audio, Wearable, Gaming, Tablet, TV, Drone, VR.`;
 
   if (platform === 'telegram') {
@@ -222,6 +222,33 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
       
       let chat = model.startChat({ history: clonedHistory });
       
+      let result;
+      let functionCalls = [];
+      let responseText = "";
+
+      const handleStream = async (streamResult) => {
+        for await (const chunk of streamResult.stream) {
+          if (chunk.functionCalls && chunk.functionCalls().length > 0) {
+            functionCalls = chunk.functionCalls();
+            continue;
+          }
+          try {
+            const text = chunk.text();
+            if (text) {
+              responseText += text;
+              if (onChunk) onChunk(text);
+            }
+          } catch (e) {
+            // chunk.text() throws if it's a function call without text
+          }
+        }
+        result = await streamResult.response;
+        // fallback to check function calls on final response just in case
+        if (!functionCalls.length && result.functionCalls && result.functionCalls().length > 0) {
+          functionCalls = result.functionCalls();
+        }
+      };
+      
       let messagePayload = userMessage;
       if (media) {
         const inlineData = media.inlineData || media;
@@ -230,14 +257,8 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
           { inlineData: { data: inlineData.data, mimeType: inlineData.mimeType } }
         ];
       }
-      let result = await chat.sendMessage(messagePayload);
       
-      let functionCalls = [];
-      try {
-        functionCalls = result.response.functionCalls ? result.response.functionCalls() : [];
-      } catch (fcErr) {
-        console.warn(`⚠️ [${sessionId}] Error reading functionCalls:`, fcErr.message);
-      }
+      await handleStream(await chat.sendMessageStream(messagePayload));
       
       // Process up to 3 rounds of sequential tool calls (handles multi-step tool usage)
       let toolRound = 0;
@@ -262,7 +283,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
              }
            }];
            try {
-             result = await chat.sendMessage(functionResponseParts);
+             await handleStream(await chat.sendMessageStream(functionResponseParts));
            } catch (mErr) {
              console.warn(`⚠️ [${sessionId}] Failed to send search follow-up:`, mErr.message);
              // Build fallback response from search results directly
@@ -290,7 +311,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
              }
            }];
            try {
-             result = await chat.sendMessage(functionResponseParts);
+             await handleStream(await chat.sendMessageStream(functionResponseParts));
            } catch (mErr) {
              console.warn(`⚠️ [${sessionId}] Failed to send policy follow-up:`, mErr.message);
              if (policyResult) responseText = policyResult;
@@ -308,7 +329,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
              }
            }];
            try {
-             result = await chat.sendMessage(functionResponseParts);
+             await handleStream(await chat.sendMessageStream(functionResponseParts));
            } catch (mErr) {
              console.warn(`⚠️ [${sessionId}] Failed to send addToCart follow-up:`, mErr.message);
              responseText = `✅ ${call.args.productName} has been added to your cart!`;
@@ -339,6 +360,13 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
       }
 
       // Graceful Fallback if model response text is empty after tool execution
+      if (!responseText) {
+        try {
+          responseText = result.response ? result.response.text() : "";
+        } catch (e) {
+          // ignore
+        }
+      }
       if (!responseText || responseText.trim() === '') {
         if (policyResult) {
           responseText = policyResult;
@@ -347,20 +375,20 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
             searchResults.map(p => `• **${p.name}** - $${p.price} (${p.inStock ? 'In Stock' : 'Out of Stock'})\n  _${p.description}_`).join('\n\n');
         } else if (searchResults && searchResults.length === 0) {
           responseText = "We currently don't have exact matches in stock for that item. Feel free to ask about our smartphones, laptops, audio gear, or accessories!";
+        } else {
+          responseText = "I've processed your request but encountered an error generating a final response.";
         }
       }
-      
-      if (responseText && responseText.trim() !== '') {
-        console.log(`✅ [${sessionId}] Successfully generated response with model ${modelName}`);
-        try {
-          const newHistory = await chat.getHistory();
-          await saveChatHistory(sessionId, newHistory);
-        } catch (hErr) {
-          console.warn(`⚠️ [${sessionId}] Failed to save chat history:`, hErr.message);
-        }
-        lastError = null;
-        break; // Successfully got a response, exit model loop
+
+      console.log(`✅ [${sessionId}] Successfully generated response with model ${modelName}`);
+      try {
+        const newHistory = await chat.getHistory();
+        await saveChatHistory(sessionId, newHistory);
+      } catch (hErr) {
+        console.warn(`⚠️ [${sessionId}] Failed to save chat history:`, hErr.message);
       }
+      lastError = null;
+      break; // Successfully got a response, exit model loop
     } catch (err) {
       lastError = err;
       console.warn(`⚠️ Model ${modelName} failed for session ${sessionId}. Error:`, err.message || err);
@@ -381,7 +409,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
   return { reply: responseText, actions };
 }
 
-// Web API endpoint for Website AI Chat Widget
+// Web API endpoint for Website AI Chat Widget (SSE Streaming)
 app.post('/api/chat', async (req, res) => {
   try {
     const { message, sessionId, media } = req.body;
@@ -389,11 +417,23 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ error: 'Message or media is required' });
     }
     const cleanSessionId = sessionId || 'web_default_session';
-    const result = await processAIChat({ sessionId: cleanSessionId, userMessage: message || "What is in this photo?", platform: 'web', media });
-    res.json({ reply: result.reply, actions: result.actions });
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const onChunk = (text) => {
+      res.write(`data: ${JSON.stringify({ text })}\n\n`);
+    };
+
+    const result = await processAIChat({ sessionId: cleanSessionId, userMessage: message || "What is in this photo?", platform: 'web', media, onChunk });
+    
+    res.write(`data: ${JSON.stringify({ done: true, actions: result.actions })}\n\n`);
+    res.end();
   } catch (err) {
     console.error('❌ [API /api/chat] Error handling chat request:', err);
-    res.status(500).json({ error: 'Failed to process AI chat request' });
+    res.write(`data: ${JSON.stringify({ error: 'Failed to process AI chat request' })}\n\n`);
+    res.end();
   }
 });
 

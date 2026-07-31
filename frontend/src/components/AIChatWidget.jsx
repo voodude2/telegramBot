@@ -84,22 +84,62 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction }) {
       setSelectedFile(null);
 
       if (!response.ok) throw new Error('Network response was not ok');
-      const data = await response.json();
+      
+      const aiMsgId = `ai_${Date.now()}`;
+      setMessages(prev => [
+        ...prev, 
+        {
+          id: aiMsgId,
+          text: '',
+          sender: 'assistant',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      ]);
 
-      if (data.actions && data.actions.length > 0 && onAction) {
-        data.actions.forEach(action => {
-          onAction(action);
-        });
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      
+      let aiText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunkStr = decoder.decode(value, { stream: true });
+        const lines = chunkStr.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.text) {
+                aiText += data.text;
+                setMessages(prev => prev.map(msg => 
+                  msg.id === aiMsgId ? { ...msg, text: aiText } : msg
+                ));
+              }
+              
+              if (data.done) {
+                if (data.actions && data.actions.length > 0 && onAction) {
+                  data.actions.forEach(action => {
+                    onAction(action);
+                  });
+                }
+              }
+              
+              if (data.error) {
+                aiText = data.error;
+                setMessages(prev => prev.map(msg => 
+                  msg.id === aiMsgId ? { ...msg, text: aiText } : msg
+                ));
+              }
+            } catch (e) {
+              console.error('Error parsing SSE chunk:', e);
+            }
+          }
+        }
       }
-
-      const aiMsg = {
-        id: `ai_${Date.now()}`,
-        text: data.reply || 'Sorry, I could not generate a response.',
-        sender: 'assistant',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-
-      setMessages(prev => [...prev, aiMsg]);
     } catch (err) {
       console.error('Error sending message:', err);
       const errorMsg = {
