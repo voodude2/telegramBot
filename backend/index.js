@@ -435,7 +435,7 @@ app.post('/api/chat', async (req, res) => {
 
     const result = await processAIChat({ sessionId: cleanSessionId, userMessage: message || "What is in this photo?", platform: 'web', media, onChunk });
     
-    res.write(`data: ${JSON.stringify({ done: true, actions: result.actions })}\n\n`);
+    res.write(`data: ${JSON.stringify({ done: true, actions: result.actions, finalReply: result.reply })}\n\n`);
     res.end();
   } catch (err) {
     console.error('❌ [API /api/chat] Error handling chat request:', err);

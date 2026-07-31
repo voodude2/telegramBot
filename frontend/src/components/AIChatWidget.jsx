@@ -121,6 +121,13 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction }) {
               }
               
               if (data.done) {
+                if (data.finalReply) {
+                  aiText = data.finalReply;
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === aiMsgId ? { ...msg, text: aiText } : msg
+                  ));
+                }
+                
                 if (data.actions && data.actions.length > 0 && onAction) {
                   data.actions.forEach(action => {
                     onAction(action);
