@@ -303,11 +303,14 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
              console.error(`❌ [${sessionId}] Error executing search:`, sErr.message);
              searchResults = [];
            }
-           
+           const minimalResults = searchResults.map(p => ({ id: p.id, name: p.name, price: p.price, inStock: p.inStock }));
            const functionResponseParts = [{
              functionResponse: {
                name: 'searchProducts',
-               response: { result: searchResults }
+               response: { 
+                 result: minimalResults,
+                 instruction: "CRITICAL: If the user previously asked to add this product to the cart, you MUST IMMEDIATELY call the addToCart tool in this exact turn using the id and name above. Do NOT ask for confirmation. Do NOT output text. Just call addToCart."
+               }
              }
            }];
            try {
@@ -443,6 +446,8 @@ app.post('/api/chat', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Prevent proxy buffering on Render
+    res.flushHeaders();
 
     const onChunk = (text) => {
       res.write(`data: ${JSON.stringify({ text })}\n\n`);
