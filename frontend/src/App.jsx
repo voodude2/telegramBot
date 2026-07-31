@@ -4,7 +4,7 @@ import ProductCard from './components/ProductCard';
 import CartSidebar from './components/CartSidebar';
 import AIChatWidget from './components/AIChatWidget';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://telegrambot-1ufk.onrender.com');
 
 const fallbackProducts = [
   { id: 1, name: "Apple iPhone 15 Pro", category: "Smartphones", description: "Forged in titanium and featuring the groundbreaking A17 Pro chip.", price: 999, rating: 4.9, inStock: true, image: "https://images.unsplash.com/photo-1695048133142-1a20484d2569?q=80&w=400&auto=format&fit=crop" },

@@ -382,11 +382,23 @@ bot.on('text', async (ctx) => {
     if (result.actions && result.actions.length > 0) {
       const cartActions = result.actions.filter(a => a.type === 'ADD_TO_CART');
       if (cartActions.length > 0) {
-        finalReply += "\n\n🛒 _I've prepared these items for your cart! (Since you're on Telegram, this is just a virtual confirmation)._";
+        finalReply += "\n\n🛒 I've prepared these items for your cart! (Since you're on Telegram, this is just a virtual confirmation).";
       }
     }
     
-    await ctx.reply(finalReply, { parse_mode: 'Markdown' });
+    // Try sending with Markdown formatting; if Telegram can't parse it, send as plain text
+    try {
+      await ctx.reply(finalReply, { parse_mode: 'Markdown' });
+    } catch (mdErr) {
+      console.warn(`⚠️ [Telegram] Markdown parse failed, sending as plain text. Error: ${mdErr.message}`);
+      // Strip markdown formatting for plain text fallback
+      const plainText = finalReply
+        .replace(/\*\*/g, '')   // Remove bold **
+        .replace(/\*/g, '')     // Remove italic *
+        .replace(/_/g, '')      // Remove underline _
+        .replace(/`/g, '');     // Remove code `
+      await ctx.reply(plainText);
+    }
   } catch (error) {
     console.error('❌ [Telegram Bot] Error handling message:', error);
     await ctx.reply('Sorry, a technical error occurred. Please try again later. / ბოდიში, ტექნიკური შეცდომა მოხდა. გთხოვთ, სცადოთ მოგვიანებით.');
