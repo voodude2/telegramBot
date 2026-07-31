@@ -123,62 +123,73 @@ app.get('/api/products/:id', async (req, res) => {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Core AI Chat Processing Engine (Shared by Web API and Telegram Bot)
-async function processAIChat({ sessionId, userMessage }) {
-  const systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. Use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, FAQ, etc. Use the addToCart tool when a user explicitly wants to buy or add a product to their shopping cart. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries. CRITICAL: The product database is in English. You MUST translate user product queries and categories to English BEFORE using the searchProducts tool. The ONLY valid categories are: Smartphone, Laptop, Audio, Wearable, Gaming, Tablet, TV, Drone, VR.`;
+async function processAIChat({ sessionId, userMessage, platform = 'web' }) {
+  let systemInstruction = `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. Use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, FAQ, etc. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries. CRITICAL: The product database is in English. You MUST translate user product queries and categories to English BEFORE using the searchProducts tool. The ONLY valid categories are: Smartphone, Laptop, Audio, Wearable, Gaming, Tablet, TV, Drone, VR.`;
 
-  const searchProductsTool = {
-    functionDeclarations: [
-      {
-        name: "searchProducts",
-        description: "Search the real-time product inventory. CRITICAL: The database is in English. You MUST translate any non-English search queries or categories to English before calling this tool.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            searchQuery: {
-              type: "STRING",
-              description: "The English search query to match against product names or descriptions."
-            },
-            category: {
-              type: "STRING",
-              description: "The English product category to filter by.",
-              enum: ["Smartphone", "Laptop", "Audio", "Wearable", "Gaming", "Tablet", "TV", "Drone", "VR"]
-            }
+  if (platform === 'telegram') {
+    systemInstruction += ` CRITICAL: The user is chatting with you on Telegram where there is no shopping cart. DO NOT attempt to add items to a cart. If the user asks to buy or add an item to their cart, politely instruct them to visit our website (TechStore.com) to complete their purchase.`;
+  } else {
+    systemInstruction += ` Use the addToCart tool when a user explicitly wants to buy or add a product to their shopping cart.`;
+  }
+
+  const baseTools = [
+    {
+      name: "searchProducts",
+      description: "Search the real-time product inventory. CRITICAL: The database is in English. You MUST translate any non-English search queries or categories to English before calling this tool.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          searchQuery: {
+            type: "STRING",
+            description: "The English search query to match against product names or descriptions."
+          },
+          category: {
+            type: "STRING",
+            description: "The English product category to filter by.",
+            enum: ["Smartphone", "Laptop", "Audio", "Wearable", "Gaming", "Tablet", "TV", "Drone", "VR"]
           }
         }
-      },
-      {
-        name: "askStorePolicy",
-        description: "Look up store policies, return policies, shipping information, FAQs, or any general store rules.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            query: {
-              type: "STRING",
-              description: "The specific policy topic or question the user is asking about (e.g. 'return policy', 'shipping times')."
-            }
-          },
-          required: ["query"]
-        }
-      },
-      {
-        name: "addToCart",
-        description: "Add a specific product to the user's shopping cart. Use this when the user explicitly asks to buy or add a product to their cart.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            productId: {
-              type: "NUMBER",
-              description: "The ID of the product to add to the cart."
-            },
-            productName: {
-              type: "STRING",
-              description: "The name of the product being added."
-            }
-          },
-          required: ["productId", "productName"]
-        }
       }
-    ]
+    },
+    {
+      name: "askStorePolicy",
+      description: "Look up store policies, return policies, shipping information, FAQs, or any general store rules.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          query: {
+            type: "STRING",
+            description: "The specific policy topic or question the user is asking about (e.g. 'return policy', 'shipping times')."
+          }
+        },
+        required: ["query"]
+      }
+    }
+  ];
+
+  if (platform === 'web') {
+    baseTools.push({
+      name: "addToCart",
+      description: "Add a specific product to the user's shopping cart. Use this when the user explicitly asks to buy or add a product to their cart.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          productId: {
+            type: "NUMBER",
+            description: "The ID of the product to add to the cart."
+          },
+          productName: {
+            type: "STRING",
+            description: "The name of the product being added."
+          }
+        },
+        required: ["productId", "productName"]
+      }
+    });
+  }
+
+  const aiTools = {
+    functionDeclarations: baseTools
   };
 
   let history = await getChatHistory(sessionId);
@@ -197,7 +208,7 @@ async function processAIChat({ sessionId, userMessage }) {
       const model = genAI.getGenerativeModel({
         model: modelName,
         systemInstruction: systemInstruction,
-        tools: [searchProductsTool],
+        tools: [aiTools],
       });
 
       const clonedHistory = JSON.parse(JSON.stringify(history));
@@ -390,16 +401,8 @@ bot.on('text', async (ctx) => {
   const userMessage = ctx.message.text;
 
   try {
-    const result = await processAIChat({ sessionId: chatId, userMessage });
+    const result = await processAIChat({ sessionId: chatId, userMessage, platform: 'telegram' });
     let finalReply = result.reply;
-    
-    // Fallback for Telegram users since they don't have a UI cart
-    if (result.actions && result.actions.length > 0) {
-      const cartActions = result.actions.filter(a => a.type === 'ADD_TO_CART');
-      if (cartActions.length > 0) {
-        finalReply += "\n\n🛒 I've prepared these items for your cart! (Since you're on Telegram, this is just a virtual confirmation).";
-      }
-    }
     
     // Try sending with Markdown formatting; if Telegram can't parse it, send as plain text
     try {
