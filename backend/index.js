@@ -161,7 +161,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
     },
     {
       name: "askStorePolicy",
-      description: "Look up store policies, return policies, shipping information, FAQs, or any general store rules.",
+      description: "Look up store policies, returns, shipping, international delivery, FAQs, or store rules. CRITICAL: You MUST use this tool if the user asks about shipping, delivery, or locations in any language (e.g., 'შიფინგი', 'მიტანა', 'საერთაშორისო', 'ჩამოტანა').",
       parameters: {
         type: "OBJECT",
         properties: {
@@ -310,7 +310,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
                name: 'searchProducts',
                response: { 
                  result: minimalResults,
-                 instruction: "CRITICAL: If the user previously asked to add this product to the cart, you MUST IMMEDIATELY call the addToCart tool in this exact turn using the id and name above. Do NOT ask for confirmation. Do NOT output text. Just call addToCart."
+                 instruction: "Here are the search results. If the user explicitly asked to add an item to the cart, YOU MUST CALL the 'addToCart' tool NOW using the exact product ID. You are allowed to output a brief message like 'Adding to cart...' while calling the tool so you don't freeze."
                }
              }
            }];
