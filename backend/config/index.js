@@ -198,9 +198,30 @@ const config = {
   })(),
 };
 
+/**
+ * Values copied straight out of .env.example. These are the worst kind of
+ * misconfiguration: everything boots, the logs look healthy, and every browser
+ * request is rejected. Warn loudly rather than fatally — a wrong CORS origin
+ * only breaks the web frontend, and refusing to boot would take the Telegram
+ * bot down with it.
+ */
+const PLACEHOLDER_PATTERN = /your-frontend|your_|example\.com|changeme|xxx+/i;
+
 if (isProduction) {
   if (config.corsOrigins.includes('*')) {
     fatal.push('FRONTEND_URL must list explicit origins in production (wildcard CORS refused).');
+  }
+
+  const placeholders = config.corsOrigins.filter((o) => PLACEHOLDER_PATTERN.test(o));
+  if (placeholders.length > 0) {
+    console.warn(
+      `\n${'='.repeat(72)}\n` +
+        `⛔ FRONTEND_URL still contains a placeholder: ${placeholders.join(', ')}\n` +
+        `   Every browser request will be blocked by CORS while the server\n` +
+        `   itself looks perfectly healthy. Set FRONTEND_URL to your frontend's\n` +
+        `   real origin (scheme + host, no trailing slash).\n` +
+        `${'='.repeat(72)}\n`
+    );
   }
   if (!config.admin.apiKey) {
     console.warn('⚠️  ADMIN_API_KEY is not set. All /api/admin routes will be denied.');
