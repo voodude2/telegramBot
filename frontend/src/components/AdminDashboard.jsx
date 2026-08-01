@@ -11,18 +11,34 @@ export default function AdminDashboard({ onBack }) {
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [unauthorized, setUnauthorized] = useState(false);
+  const [adminKey, setAdminKey] = useState(() => localStorage.getItem('techstore_admin_key') || '');
+  const [inputKey, setInputKey] = useState('');
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
   const fetchData = async () => {
     setLoading(true);
     setError(false);
+    setUnauthorized(false);
+    
+    const headers = {};
+    if (adminKey) {
+      headers['Authorization'] = `Bearer ${adminKey}`;
+    }
+
     try {
       const [statsRes, questionsRes, costsRes, timelineRes] = await Promise.all([
-        fetch(`${API_URL}/api/admin/stats`),
-        fetch(`${API_URL}/api/admin/questions`),
-        fetch(`${API_URL}/api/admin/costs`),
-        fetch(`${API_URL}/api/admin/timeline`)
+        fetch(`${API_URL}/api/admin/stats`, { headers }),
+        fetch(`${API_URL}/api/admin/questions`, { headers }),
+        fetch(`${API_URL}/api/admin/costs`, { headers }),
+        fetch(`${API_URL}/api/admin/timeline`, { headers })
       ]);
+
+      if (statsRes.status === 401 || questionsRes.status === 401) {
+        setUnauthorized(true);
+        setLoading(false);
+        return;
+      }
 
       if (!statsRes.ok || !questionsRes.ok || !costsRes.ok || !timelineRes.ok) {
         throw new Error("Failed to fetch dashboard data");
@@ -53,9 +69,67 @@ export default function AdminDashboard({ onBack }) {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000); // refresh every 30 seconds
+    const interval = setInterval(fetchData, 30000); // Auto refresh every 30s
     return () => clearInterval(interval);
-  }, []);
+  }, [adminKey]);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    if (!inputKey.trim()) return;
+    localStorage.setItem('techstore_admin_key', inputKey.trim());
+    setAdminKey(inputKey.trim());
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('techstore_admin_key');
+    setAdminKey('');
+    setUnauthorized(true);
+  };
+
+  if (unauthorized) {
+    return (
+      <div className="min-h-screen bg-bg-dark text-white flex items-center justify-center p-4">
+        <div className="bg-bg-card border border-border-glow p-8 rounded-2xl max-w-md w-full shadow-2xl backdrop-blur-md">
+          <div className="text-center mb-6">
+            <div className="text-4xl mb-2">🔐</div>
+            <h2 className="text-2xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+              Admin Access Restricted
+            </h2>
+            <p className="text-text-muted text-sm mt-2">
+              Please enter your ADMIN_API_KEY to access analytics dashboard.
+            </p>
+          </div>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-text-muted mb-1">Admin Security Key</label>
+              <input
+                type="password"
+                value={inputKey}
+                onChange={(e) => setInputKey(e.target.value)}
+                placeholder="Enter password..."
+                className="w-full bg-bg-dark border border-border-glow rounded-xl px-4 py-3 text-white focus:outline-none focus:border-primary transition-colors"
+                autoFocus
+              />
+            </div>
+            <button
+              type="submit"
+              className="w-full py-3 bg-gradient-to-r from-primary to-secondary text-white font-bold rounded-xl shadow-lg hover:opacity-90 transition-opacity"
+            >
+              Unlock Dashboard
+            </button>
+          </form>
+          <div className="mt-6 text-center">
+            <button
+              onClick={onBack}
+              className="text-xs text-text-muted hover:text-white transition-colors"
+            >
+              ← Back to Store
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleRefresh = () => {
     fetchData();
