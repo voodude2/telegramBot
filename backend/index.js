@@ -59,6 +59,66 @@ async function saveChatHistory(chatId, newHistory) {
   inMemoryHistories.set(chatId, newHistory);
 }
 
+async function trackAnalytics({ sessionId, platform, userMessage, modelName, inputTokens, outputTokens, toolsUsed }) {
+  if (!redis) return; // Skip if Redis is not configured
+  
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  
+  try {
+    // Use pipeline for atomic operations
+    const pipe = redis.pipeline();
+    
+    // 1. Increment daily chat counter
+    pipe.incr(`analytics:chats:${today}`);
+    
+    // 2. Track unique session
+    pipe.sadd(`analytics:sessions:${today}`, sessionId);
+    
+    // 3. Store question text (trim to 200 chars)
+    if (userMessage) {
+      pipe.lpush(`analytics:questions:${today}`, userMessage.substring(0, 200));
+    }
+    
+    // 4. Track token usage
+    if (inputTokens || outputTokens) {
+      pipe.hincrby(`analytics:tokens:${today}`, 'input', inputTokens || 0);
+      pipe.hincrby(`analytics:tokens:${today}`, 'output', outputTokens || 0);
+      // Estimate cost: Gemini Flash pricing ~$0.075/1M input, ~$0.30/1M output tokens
+      const estimatedCost = ((inputTokens || 0) * 0.000000075) + ((outputTokens || 0) * 0.0000003);
+      pipe.hincrbyfloat(`analytics:tokens:${today}`, 'cost', estimatedCost);
+    }
+    
+    // 5. Track model usage
+    if (modelName) {
+      pipe.hincrby(`analytics:models:${today}`, modelName, 1);
+    }
+    
+    // 6. Track platform usage
+    pipe.hincrby(`analytics:platforms:${today}`, platform || 'unknown', 1);
+    
+    // 7. Track tool usage
+    if (toolsUsed && toolsUsed.length > 0) {
+      for (const tool of toolsUsed) {
+        pipe.hincrby(`analytics:tools:${today}`, tool, 1);
+      }
+    }
+    
+    // Set 30-day TTL on all keys
+    const ttl = 30 * 24 * 60 * 60;
+    pipe.expire(`analytics:chats:${today}`, ttl);
+    pipe.expire(`analytics:sessions:${today}`, ttl);
+    pipe.expire(`analytics:questions:${today}`, ttl);
+    pipe.expire(`analytics:tokens:${today}`, ttl);
+    pipe.expire(`analytics:models:${today}`, ttl);
+    pipe.expire(`analytics:platforms:${today}`, ttl);
+    pipe.expire(`analytics:tools:${today}`, ttl);
+    
+    await pipe.exec();
+  } catch (err) {
+    console.warn('⚠️ Analytics tracking failed:', err.message);
+  }
+}
+
 // Helper function to execute product search
 async function executeSearch({ searchQuery, category }) {
   const products = await getProducts();
@@ -126,6 +186,134 @@ app.get('/api/products/:id', async (req, res) => {
     res.json(product);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch product' });
+  }
+});
+
+// ===== ADMIN ANALYTICS ENDPOINTS =====
+const adminAuth = (req, res, next) => {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) return next(); // No auth required in dev mode
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (token !== adminKey) return res.status(401).json({ error: 'Unauthorized' });
+  next();
+};
+
+// Daily stats overview
+app.get('/api/admin/stats', adminAuth, async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    if (!redis) return res.json({ totalChats: 0, uniqueSessions: 0, totalTokens: 0, estimatedCost: 0, platforms: {}, date: today });
+    
+    const [totalChats, uniqueSessions, tokens, platforms] = await Promise.all([
+      redis.get(`analytics:chats:${today}`),
+      redis.scard(`analytics:sessions:${today}`),
+      redis.hgetall(`analytics:tokens:${today}`),
+      redis.hgetall(`analytics:platforms:${today}`)
+    ]);
+    
+    res.json({
+      totalChats: totalChats || 0,
+      uniqueSessions: uniqueSessions || 0,
+      totalTokens: (parseInt(tokens?.input || 0) + parseInt(tokens?.output || 0)),
+      inputTokens: parseInt(tokens?.input || 0),
+      outputTokens: parseInt(tokens?.output || 0),
+      estimatedCost: parseFloat(tokens?.cost || 0).toFixed(6),
+      platforms: platforms || {},
+      date: today
+    });
+  } catch (err) {
+    console.error('Admin stats error:', err);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
+// Top questions
+app.get('/api/admin/questions', adminAuth, async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    if (!redis) return res.json({ questions: [], date: today });
+    
+    const questions = await redis.lrange(`analytics:questions:${today}`, 0, 499);
+    
+    // Count frequency
+    const freq = {};
+    for (const q of (questions || [])) {
+      const normalized = q.toLowerCase().trim();
+      freq[normalized] = (freq[normalized] || 0) + 1;
+    }
+    
+    // Sort by frequency
+    const sorted = Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([question, count]) => ({ question, count }));
+    
+    res.json({ questions: sorted, totalQuestions: (questions || []).length, date: today });
+  } catch (err) {
+    console.error('Admin questions error:', err);
+    res.status(500).json({ error: 'Failed to fetch questions' });
+  }
+});
+
+// Cost breakdown
+app.get('/api/admin/costs', adminAuth, async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    if (!redis) return res.json({ models: {}, tools: {}, tokens: {}, date: today });
+    
+    const [models, tools, tokens] = await Promise.all([
+      redis.hgetall(`analytics:models:${today}`),
+      redis.hgetall(`analytics:tools:${today}`),
+      redis.hgetall(`analytics:tokens:${today}`)
+    ]);
+    
+    res.json({
+      models: models || {},
+      tools: tools || {},
+      tokens: {
+        input: parseInt(tokens?.input || 0),
+        output: parseInt(tokens?.output || 0),
+        cost: parseFloat(tokens?.cost || 0).toFixed(6)
+      },
+      date: today
+    });
+  } catch (err) {
+    console.error('Admin costs error:', err);
+    res.status(500).json({ error: 'Failed to fetch costs' });
+  }
+});
+
+// 7-day timeline
+app.get('/api/admin/timeline', adminAuth, async (req, res) => {
+  try {
+    if (!redis) return res.json({ timeline: [] });
+    
+    const timeline = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      
+      const [chats, sessions, tokens] = await Promise.all([
+        redis.get(`analytics:chats:${dateStr}`),
+        redis.scard(`analytics:sessions:${dateStr}`),
+        redis.hgetall(`analytics:tokens:${dateStr}`)
+      ]);
+      
+      timeline.push({
+        date: dateStr,
+        label: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+        chats: parseInt(chats || 0),
+        sessions: parseInt(sessions || 0),
+        tokens: parseInt(tokens?.input || 0) + parseInt(tokens?.output || 0),
+        cost: parseFloat(tokens?.cost || 0)
+      });
+    }
+    
+    res.json({ timeline });
+  } catch (err) {
+    console.error('Admin timeline error:', err);
+    res.status(500).json({ error: 'Failed to fetch timeline' });
   }
 });
 
@@ -237,6 +425,11 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
   let lastError = null;
   let searchResults = null;
   let policyResult = null;
+  
+  let usedModelName = null;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let toolsUsed = [];
 
   for (const modelName of candidateModels) {
     try {
@@ -264,6 +457,11 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
           if (chunk.functionCalls) {
             functionCalls = functionCalls.concat(chunk.functionCalls);
           }
+          // Capture token usage from the last chunk
+          if (chunk.usageMetadata) {
+            totalInputTokens = chunk.usageMetadata.promptTokenCount || 0;
+            totalOutputTokens = chunk.usageMetadata.candidatesTokenCount || 0;
+          }
         }
       };
       
@@ -288,6 +486,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
         
         for (const call of currentCalls) {
           console.log(`🤖 [${sessionId}] Round ${toolRound}: Model called ${call.name} with args:`, call.args);
+          toolsUsed.push(call.name);
           
           let functionResponsePart = {
             functionResponse: {
@@ -362,6 +561,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
       }
 
       console.log(`✅ [${sessionId}] Successfully generated response with model ${modelName}`);
+      usedModelName = modelName;
       try {
         const newHistory = await chat.getHistory();
         await saveChatHistory(sessionId, newHistory);
@@ -392,6 +592,9 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
     responseText = responseText.replace(/(ბოდიშს გიხდით|ბოდიში|შეცდომა გაიპარა|უკაცრავად)[^\.\!\?]*[\.\!\?]/gi, '').trim();
     if (!responseText) responseText = "✅"; // Fallback if it only generated an apology
   }
+
+  // Track analytics (fire-and-forget, non-blocking)
+  trackAnalytics({ sessionId, platform, userMessage, modelName: usedModelName, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, toolsUsed }).catch(() => {});
 
   return { reply: responseText, actions };
 }

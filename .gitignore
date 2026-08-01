@@ -32,3 +32,5 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+# Test files
+backend/test-*.js

@@ -3,6 +3,7 @@ import Navbar from './components/Navbar';
 import ProductCard from './components/ProductCard';
 import CartSidebar from './components/CartSidebar';
 import AIChatWidget from './components/AIChatWidget';
+import AdminDashboard from './components/AdminDashboard';
 
 const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://telegrambot-1ufk.onrender.com');
 
@@ -31,6 +32,19 @@ export default function App() {
   const [activeCategory, setActiveCategory] = useState("All");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
+
+  // Hash-based routing for Admin Dashboard
+  const [currentPage, setCurrentPage] = useState(
+    window.location.hash === '#admin' ? 'admin' : 'store'
+  );
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setCurrentPage(window.location.hash === '#admin' ? 'admin' : 'store');
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   useEffect(() => {
     const fetchProducts = async () => {
@@ -90,6 +104,11 @@ export default function App() {
 
   const cartTotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const cartCount = cartItems.reduce((count, item) => count + item.quantity, 0);
+
+  // Admin Dashboard route
+  if (currentPage === 'admin') {
+    return <AdminDashboard onBack={() => { window.location.hash = ''; setCurrentPage('store'); }} />;
+  }
 
   return (
     <div className="min-h-screen flex flex-col font-sans">
