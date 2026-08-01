@@ -55,7 +55,7 @@ async function saveChatHistory(chatId, newHistory) {
             { role: "assistant", content: botText }
           ];
           // Asynchronously add to Mem0 without blocking the chat flow
-          memory.add(messages, { userId: chatId }).catch(err => console.warn("⚠️ Mem0 extraction failed:", err.message));
+          memory.add(messages, { user_id: chatId, app_id: "techstore" }).catch(err => console.warn("⚠️ Mem0 extraction failed:", err.message));
         }
       }
     }
@@ -229,7 +229,7 @@ const adminAuth = (req, res, next) => {
 // Get all memories from Mem0
 app.get('/api/admin/memories', adminAuth, async (req, res) => {
   try {
-    const mems = await memory.getAll();
+    const mems = await memory.getAll({ app_id: "techstore" });
     res.json(mems || []);
   } catch (err) {
     console.error('Mem0 fetch error:', err);
@@ -431,7 +431,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
 
   // Retrieve long-term memory facts from Mem0
   try {
-    const mem0Results = await memory.search(userMessage, { filters: { userId: sessionId } });
+    const mem0Results = await memory.search(userMessage, { user_id: sessionId, app_id: "techstore" });
     if (mem0Results && mem0Results.length > 0) {
       const memories = mem0Results.map(r => r.memory || r.content).filter(Boolean).join('\n- ');
       if (memories) {
