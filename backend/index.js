@@ -257,6 +257,17 @@ app.get('/api/admin/memories', adminAuth, async (req, res) => {
   }
 });
 
+// Clear all memories from Mem0
+app.delete('/api/admin/memories', adminAuth, async (req, res) => {
+  try {
+    await memory.deleteAll({ app_id: "techstore" });
+    res.json({ message: "Memories cleared successfully" });
+  } catch (err) {
+    console.error('Mem0 delete error:', err);
+    res.status(500).json({ error: 'Failed to clear memories' });
+  }
+});
+
 // Daily stats overview
 app.get('/api/admin/stats', adminAuth, async (req, res) => {
   try {

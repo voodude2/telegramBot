@@ -93,6 +93,30 @@ export default function AdminDashboard({ onBack }) {
     setUnauthorized(true);
   };
 
+  const handleClearMemories = async () => {
+    if (!window.confirm("Are you sure you want to clear ALL memories? This cannot be undone.")) return;
+    
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/admin/memories`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${adminKey}`
+        }
+      });
+      if (res.ok) {
+        await fetchData();
+      } else {
+        alert("Failed to clear memories");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error connecting to server");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (unauthorized) {
     return (
       <div className="min-h-screen bg-bg-dark text-white flex items-center justify-center p-4">
@@ -274,9 +298,18 @@ export default function AdminDashboard({ onBack }) {
           <div className="flex items-center gap-3 mb-6 pb-4 border-b border-white/5">
             <span className="text-2xl">🧠</span>
             <h3 className="text-xl font-bold">Autonomous Memory (Mem0)</h3>
-            <span className="ml-auto text-xs bg-primary/20 text-primary px-2 py-1 rounded-full border border-primary/30">
-              {memories ? memories.length : 0} Facts Stored
-            </span>
+            <div className="ml-auto flex items-center gap-3">
+              <span className="text-xs bg-primary/20 text-primary px-2 py-1 rounded-full border border-primary/30">
+                {memories ? memories.length : 0} Facts Stored
+              </span>
+              <button
+                onClick={handleClearMemories}
+                disabled={loading || !memories || memories.length === 0}
+                className="text-xs bg-danger/20 text-danger hover:bg-danger/30 px-3 py-1.5 rounded-lg transition-colors border border-danger/30 cursor-pointer disabled:opacity-50 flex items-center gap-1"
+              >
+                🗑️ Clear All
+              </button>
+            </div>
           </div>
           
           <div className="overflow-x-auto">
