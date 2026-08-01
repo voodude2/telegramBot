@@ -303,7 +303,7 @@ export default function AdminDashboard({ onBack }) {
                         {mem.user_id || mem.userId || 'System'}
                       </td>
                       <td className="py-3 text-text-muted text-right">
-                        {mem.created_at ? new Date(mem.created_at).toLocaleDateString() : 'Just now'}
+                        {mem.createdAt || mem.created_at ? new Date(mem.createdAt || mem.created_at).toLocaleDateString() : 'Just now'}
                       </td>
                     </tr>
                   ))}
