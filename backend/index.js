@@ -7,6 +7,7 @@ const { GoogleGenAI } = require('@google/genai');
 const { getProducts, getProductById } = require('./services/googleSheets');
 const { initializeRAG, findRelevantPolicy } = require('./services/ragService');
 const { Redis } = require('@upstash/redis');
+const { Memory } = require('mem0ai/oss');
 
 // Initialize Upstash Redis with fallback to in-memory store if credentials are missing
 const redisUrl = process.env.UPSTASH_REDIS_REST_URL?.replace(/^"|"$/g, '').trim();
@@ -18,6 +19,25 @@ const redis = hasRedis
       token: redisToken,
     })
   : null;
+
+// Initialize Mem0 for autonomous long-term memory
+const mem0Config = {
+  llm: {
+    provider: "gemini",
+    config: {
+      apiKey: process.env.GEMINI_API_KEY,
+      model: "gemini-1.5-flash",
+    }
+  },
+  embedder: {
+    provider: "gemini",
+    config: {
+      apiKey: process.env.GEMINI_API_KEY,
+      model: "text-embedding-004",
+    }
+  }
+};
+const memory = new Memory(mem0Config);
 
 const inMemoryHistories = new Map();
 
@@ -35,6 +55,30 @@ async function getChatHistory(chatId) {
 }
 
 async function saveChatHistory(chatId, newHistory) {
+  // Extract long-term facts autonomously using Mem0
+  try {
+    if (newHistory.length >= 2) {
+      const lastUser = newHistory[newHistory.length - 2];
+      const lastBot = newHistory[newHistory.length - 1];
+      if (lastUser.role === 'user' && lastBot.role === 'model') {
+        // Only extract text parts, ignoring function calls/responses
+        const userText = lastUser.parts.filter(p => p.text).map(p => p.text).join(' ');
+        const botText = lastBot.parts.filter(p => p.text).map(p => p.text).join(' ');
+        
+        if (userText && botText) {
+          const messages = [
+            { role: "user", content: userText },
+            { role: "assistant", content: botText }
+          ];
+          // Asynchronously add to Mem0 without blocking the chat flow
+          memory.add(messages, { userId: chatId }).catch(err => console.warn("⚠️ Mem0 extraction failed:", err.message));
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("⚠️ Mem0 error:", err.message);
+  }
+
   const historyKey = `chat_history:${chatId}`;
   if (newHistory.length > 40) {
     newHistory.splice(0, newHistory.length - 40);
@@ -389,6 +433,19 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
   const aiTools = {
     functionDeclarations: baseTools
   };
+
+  // Retrieve long-term memory facts from Mem0
+  try {
+    const mem0Results = await memory.search(userMessage, { filters: { userId: sessionId } });
+    if (mem0Results && mem0Results.length > 0) {
+      const memories = mem0Results.map(r => r.memory || r.content).filter(Boolean).join('\n- ');
+      if (memories) {
+        systemInstruction += `\n\nCRITICAL KNOWLEDGE ABOUT THE USER (From Long-Term Memory):\n- ${memories}\nUse these facts to personalize your response and respect user preferences.`;
+      }
+    }
+  } catch (err) {
+    console.warn(`⚠️ [${sessionId}] Mem0 search failed:`, err.message);
+  }
 
   let history = await getChatHistory(sessionId) || [];
 
