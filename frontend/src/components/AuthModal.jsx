@@ -32,7 +32,13 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }) {
         body: JSON.stringify(payload)
       });
       
-      const data = await res.json();
+      let data;
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        data = await res.json();
+      } else {
+        data = { error: `Server error: ${res.status}` };
+      }
       
       if (!res.ok) {
         throw new Error(data.error || 'Authentication failed');
