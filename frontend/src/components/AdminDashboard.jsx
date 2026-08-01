@@ -8,6 +8,7 @@ export default function AdminDashboard({ onBack }) {
   const [questions, setQuestions] = useState(null);
   const [costs, setCosts] = useState(null);
   const [timeline, setTimeline] = useState(null);
+  const [memories, setMemories] = useState(null);
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -27,11 +28,12 @@ export default function AdminDashboard({ onBack }) {
     }
 
     try {
-      const [statsRes, questionsRes, costsRes, timelineRes] = await Promise.all([
+      const [statsRes, questionsRes, costsRes, timelineRes, memoriesRes] = await Promise.all([
         fetch(`${API_URL}/api/admin/stats`, { headers }),
         fetch(`${API_URL}/api/admin/questions`, { headers }),
         fetch(`${API_URL}/api/admin/costs`, { headers }),
-        fetch(`${API_URL}/api/admin/timeline`, { headers })
+        fetch(`${API_URL}/api/admin/timeline`, { headers }),
+        fetch(`${API_URL}/api/admin/memories`, { headers })
       ]);
 
       if (statsRes.status === 401 || questionsRes.status === 401) {
@@ -40,19 +42,23 @@ export default function AdminDashboard({ onBack }) {
         return;
       }
 
-      if (!statsRes.ok || !questionsRes.ok || !costsRes.ok || !timelineRes.ok) {
+      if (!statsRes.ok || !questionsRes.ok || !costsRes.ok || !timelineRes.ok || !memoriesRes.ok) {
         throw new Error("Failed to fetch dashboard data");
       }
 
-      const statsData = await statsRes.json();
-      const questionsData = await questionsRes.json();
-      const costsData = await costsRes.json();
-      const timelineData = await timelineRes.json();
+      const [statsData, questionsData, costsData, timelineData, memoriesData] = await Promise.all([
+        statsRes.json(),
+        questionsRes.json(),
+        costsRes.json(),
+        timelineRes.json(),
+        memoriesRes.json()
+      ]);
 
       setStats(statsData || { totalChats: 0, uniqueSessions: 0, totalTokens: 0, estimatedCost: 0 });
       setQuestions(questionsData || { questions: [], totalQuestions: 0 });
       setCosts(costsData || { models: {}, tools: {}, tokens: { input: 0, output: 0, cost: 0 } });
       setTimeline(timelineData || { timeline: [] });
+      setMemories(memoriesData || []);
     } catch (err) {
       console.error('Error fetching admin dashboard data:', err);
       setError(true);
@@ -61,6 +67,7 @@ export default function AdminDashboard({ onBack }) {
       setQuestions({ questions: [], totalQuestions: 0 });
       setCosts({ models: {}, tools: {}, tokens: { input: 0, output: 0, cost: 0 } });
       setTimeline({ timeline: [] });
+      setMemories([]);
     } finally {
       setLoading(false);
       setLastRefresh(new Date());
@@ -262,7 +269,56 @@ export default function AdminDashboard({ onBack }) {
           </div>
         </div>
 
-        {/* Middle Row */}
+        {/* Memories / Knowledge Base Section */}
+        <div className="bg-bg-card/50 backdrop-blur-sm border border-border-glow rounded-2xl p-5 md:p-6 shadow-lg">
+          <div className="flex items-center gap-3 mb-6 pb-4 border-b border-white/5">
+            <span className="text-2xl">🧠</span>
+            <h3 className="text-xl font-bold">Autonomous Memory (Mem0)</h3>
+            <span className="ml-auto text-xs bg-primary/20 text-primary px-2 py-1 rounded-full border border-primary/30">
+              {memories ? memories.length : 0} Facts Stored
+            </span>
+          </div>
+          
+          <div className="overflow-x-auto">
+            {loading && !memories ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map(i => <div key={i} className="h-12 bg-white/5 rounded-lg animate-pulse w-full"></div>)}
+              </div>
+            ) : memories && memories.length > 0 ? (
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="text-xs text-text-muted border-b border-white/10 uppercase tracking-wider">
+                    <th className="pb-3 pr-4 font-medium">Memory</th>
+                    <th className="pb-3 pr-4 font-medium">User ID</th>
+                    <th className="pb-3 font-medium text-right">Created</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5 text-sm">
+                  {memories.map((mem, idx) => (
+                    <tr key={mem.id || idx} className="hover:bg-white/5 transition-colors group">
+                      <td className="py-3 pr-4 font-medium text-white/90">
+                        {mem.memory || mem.content || mem.text}
+                      </td>
+                      <td className="py-3 pr-4 text-text-muted font-mono text-xs">
+                        {mem.user_id || mem.userId || 'System'}
+                      </td>
+                      <td className="py-3 text-text-muted text-right">
+                        {mem.created_at ? new Date(mem.created_at).toLocaleDateString() : 'Just now'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="text-center py-8 text-text-muted">
+                <span className="text-4xl block mb-2 opacity-50">📭</span>
+                No memories recorded yet. Talk to the bot to create memories!
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Main Charts & Lists Row */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
           
           {/* 7-Day Activity Chart */}

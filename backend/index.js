@@ -7,7 +7,7 @@ const { GoogleGenAI } = require('@google/genai');
 const { getProducts, getProductById } = require('./services/googleSheets');
 const { initializeRAG, findRelevantPolicy } = require('./services/ragService');
 const { Redis } = require('@upstash/redis');
-const { Memory } = require('mem0ai/oss');
+const { MemoryClient } = require('mem0ai');
 
 // Initialize Upstash Redis with fallback to in-memory store if credentials are missing
 const redisUrl = process.env.UPSTASH_REDIS_REST_URL?.replace(/^"|"$/g, '').trim();
@@ -20,24 +20,8 @@ const redis = hasRedis
     })
   : null;
 
-// Initialize Mem0 for autonomous long-term memory
-const mem0Config = {
-  llm: {
-    provider: "gemini",
-    config: {
-      apiKey: process.env.GEMINI_API_KEY,
-      model: "gemini-1.5-flash",
-    }
-  },
-  embedder: {
-    provider: "gemini",
-    config: {
-      apiKey: process.env.GEMINI_API_KEY,
-      model: "text-embedding-004",
-    }
-  }
-};
-const memory = new Memory(mem0Config);
+// Initialize Mem0 Cloud for autonomous long-term memory
+const memory = new MemoryClient({ apiKey: process.env.MEM0_API_KEY });
 
 const inMemoryHistories = new Map();
 
@@ -241,6 +225,17 @@ const adminAuth = (req, res, next) => {
   if (token !== adminKey) return res.status(401).json({ error: 'Unauthorized' });
   next();
 };
+
+// Get all memories from Mem0
+app.get('/api/admin/memories', adminAuth, async (req, res) => {
+  try {
+    const mems = await memory.getAll();
+    res.json(mems || []);
+  } catch (err) {
+    console.error('Mem0 fetch error:', err);
+    res.status(500).json({ error: 'Failed to fetch memories' });
+  }
+});
 
 // Daily stats overview
 app.get('/api/admin/stats', adminAuth, async (req, res) => {
