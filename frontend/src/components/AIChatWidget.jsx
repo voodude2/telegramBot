@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://telegrambot-1ufk.onrender.com');
 
-export default function AIChatWidget({ isOpen, setIsOpen, onAction }) {
+export default function AIChatWidget({ isOpen, setIsOpen, onAction, user }) {
   const [messages, setMessages] = useState([
     {
       id: 'welcome',
@@ -39,13 +39,17 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction }) {
 
   // Initialize persistent session ID
   useEffect(() => {
-    let savedSession = localStorage.getItem('techstore_ai_session');
-    if (!savedSession) {
-      savedSession = `web_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      localStorage.setItem('techstore_ai_session', savedSession);
+    if (user && user.id) {
+      setSessionId(user.id);
+    } else {
+      let savedSession = localStorage.getItem('techstore_ai_session');
+      if (!savedSession) {
+        savedSession = `web_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        localStorage.setItem('techstore_ai_session', savedSession);
+      }
+      setSessionId(savedSession);
     }
-    setSessionId(savedSession);
-  }, []);
+  }, [user]);
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -77,6 +81,7 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction }) {
         body: JSON.stringify({
           message: messageText,
           sessionId: sessionId,
+          userName: user ? user.name : undefined,
           media: selectedFile ? { data: selectedFile.data, mimeType: selectedFile.mimeType } : undefined
         })
       });

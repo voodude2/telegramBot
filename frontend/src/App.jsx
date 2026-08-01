@@ -4,6 +4,7 @@ import ProductCard from './components/ProductCard';
 import CartSidebar from './components/CartSidebar';
 import AIChatWidget from './components/AIChatWidget';
 import AdminDashboard from './components/AdminDashboard';
+import AuthModal from './components/AuthModal';
 
 const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://telegrambot-1ufk.onrender.com');
 
@@ -32,6 +33,30 @@ export default function App() {
   const [activeCategory, setActiveCategory] = useState("All");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
+  const [user, setUser] = useState(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
+  // Check auth status on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      const token = localStorage.getItem('techstore_token');
+      if (!token) return;
+      try {
+        const res = await fetch(`${API_URL}/api/auth/me`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setUser(data.user);
+        } else {
+          localStorage.removeItem('techstore_token');
+        }
+      } catch (err) {
+        console.warn('Auth check failed:', err);
+      }
+    };
+    checkAuth();
+  }, []);
 
   // Hash-based routing for Admin Dashboard
   const [currentPage, setCurrentPage] = useState(
@@ -118,6 +143,12 @@ export default function App() {
         onOpenCart={() => setIsCartOpen(true)}
         isMobileMenuOpen={isMobileMenuOpen}
         setIsMobileMenuOpen={setIsMobileMenuOpen}
+        user={user}
+        onLoginClick={() => setIsAuthModalOpen(true)}
+        onLogout={() => {
+          localStorage.removeItem('techstore_token');
+          setUser(null);
+        }}
       />
 
       <main className="flex-grow pt-20">
@@ -262,11 +293,27 @@ export default function App() {
         cartTotal={cartTotal}
       />
 
-      {/* Web AI Assistant Chat Widget */}
+      {/* Floating AI Chat Button */}
+      <button 
+        onClick={() => setIsAIChatOpen(!isAIChatOpen)}
+        className="fixed bottom-6 right-6 w-16 h-16 bg-gradient-to-r from-primary to-secondary rounded-full flex items-center justify-center shadow-lg hover:shadow-primary/50 transition-all duration-300 transform hover:scale-110 z-40 group"
+      >
+        <span className="text-3xl filter drop-shadow-md group-hover:animate-pulse">🤖</span>
+      </button>
+
+      {/* AI Chat Widget */}
       <AIChatWidget 
         isOpen={isAIChatOpen} 
         setIsOpen={setIsAIChatOpen} 
-        onAction={handleChatAction}
+        onAction={handleChatAction} 
+        user={user}
+      />
+
+      {/* Auth Modal */}
+      <AuthModal 
+        isOpen={isAuthModalOpen} 
+        onClose={() => setIsAuthModalOpen(false)} 
+        onLoginSuccess={(userData) => setUser(userData)} 
       />
     </div>
   );

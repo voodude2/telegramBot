@@ -1,4 +1,4 @@
-export default function Navbar({ cartCount, onOpenCart, isMobileMenuOpen, setIsMobileMenuOpen }) {
+export default function Navbar({ cartCount, onOpenCart, isMobileMenuOpen, setIsMobileMenuOpen, user, onLoginClick, onLogout }) {
   const navLinks = [
     { label: 'Home', target: 'hero' },
     { label: 'Products', target: 'products' },
@@ -46,6 +46,30 @@ export default function Navbar({ cartCount, onOpenCart, isMobileMenuOpen, setIsM
 
           {/* Action Buttons */}
           <div className="flex items-center space-x-4">
+            {/* User Auth */}
+            {user ? (
+              <div className="hidden md:flex items-center space-x-3 bg-white/5 border border-white/10 px-3 py-1.5 rounded-full">
+                <span className="text-sm text-text-muted">Hi, <span className="text-white font-medium">{user.name.split(' ')[0]}</span></span>
+                <div className="w-px h-4 bg-white/20"></div>
+                <button 
+                  onClick={onLogout}
+                  className="text-xs text-danger/80 hover:text-danger font-medium transition-colors cursor-pointer"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={onLoginClick}
+                className="hidden md:flex items-center space-x-2 text-sm font-medium text-white/80 hover:text-white transition-colors cursor-pointer"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+                <span>Login</span>
+              </button>
+            )}
+
             {/* Admin Dashboard Link */}
             <a 
               href="#admin" 
@@ -91,8 +115,21 @@ export default function Navbar({ cartCount, onOpenCart, isMobileMenuOpen, setIsM
       {/* Mobile Nav */}
       {isMobileMenuOpen && (
         <div className="md:hidden bg-bg-card border-b border-border-glow">
-          <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
-            {navLinks.map(link => (
+          <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3 bg-bg-dark border-b border-border-glow">
+          {user ? (
+            <div className="px-3 py-2 flex justify-between items-center bg-white/5 rounded-md mb-2 border border-white/10">
+              <span className="text-white font-medium">Hi, {user.name}</span>
+              <button onClick={onLogout} className="text-danger text-sm font-medium">Logout</button>
+            </div>
+          ) : (
+            <button 
+              onClick={() => { setIsMobileMenuOpen(false); onLoginClick(); }}
+              className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-primary hover:bg-white/5 transition-colors"
+            >
+              Login / Register
+            </button>
+          )}
+          {navLinks.map(link => (
               <button 
                 key={link.label} 
                 onClick={() => handleNavClick(link.target)} 
