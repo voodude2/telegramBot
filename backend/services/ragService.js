@@ -1,175 +1,226 @@
-const { JWT } = require('google-auth-library');
 const { GoogleGenAI } = require('@google/genai');
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-// In-memory array to store our pre-computed policy embeddings
-// Format: [ { question: string, answer: string, embedding: number[] } ]
-let policyKnowledgeBase = [];
+const config = require('../config');
+const { LruCache } = require('../lib/lruCache');
+const { loadSheet } = require('./googleSheets');
 
 /**
- * Calculates the cosine similarity between two vectors (arrays of numbers).
- * Returns a value between -1 and 1, where 1 means identical.
+ * In-memory vector RAG over the FAQ_Policies sheet.
+ *
+ * Behaviour worth knowing about:
+ *  - initializeRAG() is idempotent and returns a promise every caller can await,
+ *    so a request arriving during a cold start waits for the index instead of
+ *    silently answering "no policy found".
+ *  - Embeddings are generated with bounded concurrency, and a single failure no
+ *    longer discards the whole knowledge base — the policies that did embed stay
+ *    usable.
+ *  - Query embeddings are cached; policy questions repeat constantly and each
+ *    miss is a paid API call.
+ *
+ * SCALING NOTE: the index lives in this process, so every instance re-embeds the
+ * sheet at boot and holds its own copy. Fine at this size; move the vectors to
+ * Redis or pgvector keyed by content hash before scaling out horizontally.
  */
+
+const ai = config.gemini.apiKey ? new GoogleGenAI({ apiKey: config.gemini.apiKey }) : null;
+
+let policyKnowledgeBase = [];
+let initPromise = null;
+let refreshTimer = null;
+
+const queryEmbeddingCache = new LruCache({
+  max: config.rag.queryCacheSize,
+  ttlMs: 60 * 60 * 1000,
+});
+
 function cosineSimilarity(vecA, vecB) {
-  if (vecA.length !== vecB.length) return 0;
-  let dotProduct = 0;
+  if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
+  let dot = 0;
   let normA = 0;
   let normB = 0;
-  for (let i = 0; i < vecA.length; i++) {
-    dotProduct += vecA[i] * vecB[i];
+  for (let i = 0; i < vecA.length; i += 1) {
+    dot += vecA[i] * vecB[i];
     normA += vecA[i] * vecA[i];
     normB += vecB[i] * vecB[i];
   }
   if (normA === 0 || normB === 0) return 0;
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-/**
- * Uses Gemini to generate an embedding vector for a given text string.
- */
-async function generateEmbeddings(text) {
-  try {
-    const response = await ai.models.embedContent({
-      model: 'gemini-embedding-001',
-      contents: text,
-    });
-    return response.embeddings[0].values;
-  } catch (error) {
-    console.error("❌ Error generating embedding:", error.message);
-    throw new Error("Failed to generate embedding");
-  }
+async function embed(text) {
+  if (!ai) throw new Error('GEMINI_API_KEY is not configured');
+  const response = await ai.models.embedContent({
+    model: config.gemini.embeddingModel,
+    contents: text,
+  });
+  const values = response?.embeddings?.[0]?.values;
+  if (!Array.isArray(values)) throw new Error('Embedding response contained no vector');
+  return values;
 }
 
-/**
- * Connects to Google Sheets and fetches the FAQ/Policies.
- */
-async function fetchPoliciesFromSheet() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const privateKey = process.env.GOOGLE_PRIVATE_KEY;
-  const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID || process.env.SPREADSHEET_ID;
-
-  if (!email || !privateKey || !spreadsheetId) {
-    console.warn("⚠️ Google Sheets credentials not configured. RAG will be empty.");
-    return [];
-  }
-
-  try {
-    const { GoogleSpreadsheet } = await import('google-spreadsheet');
-    const serviceAccountAuth = new JWT({
-      email: email,
-      key: privateKey.replace(/\\n/g, '\n'),
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-    });
-
-    const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
-    await doc.loadInfo();
-    
-    // Find the sheet by title
-    const sheet = Object.values(doc.sheetsById).find(s => s.title === 'FAQ_Policies');
-    if (!sheet) {
-      console.warn("⚠️ Sheet tab named 'FAQ_Policies' not found. Skipping RAG loading.");
-      return [];
-    }
-
-    const rows = await sheet.getRows();
-    const policies = [];
-
-    for (const row of rows) {
-      // Assuming columns are named "Question" and "Answer"
-      const question = row.get('Question') || '';
-      const answer = row.get('Answer') || '';
-      if (question && answer) {
-        policies.push({ question, answer });
-      }
-    }
-    return policies;
-  } catch (err) {
-    console.error("❌ Error fetching policies from sheet:", err.message);
-    return [];
-  }
+async function embedQuery(text) {
+  const cached = queryEmbeddingCache.get(text);
+  if (cached) return cached;
+  const vector = await embed(text);
+  queryEmbeddingCache.set(text, vector);
+  return vector;
 }
 
-/**
- * Initializes the RAG system by fetching policies and embedding them.
- * This should be called once when the server starts.
- */
-async function initializeRAG() {
-  console.log("⏳ Initializing RAG pipeline... Fetching policies from Google Sheets...");
-  const rawPolicies = await fetchPoliciesFromSheet();
-  
-  policyKnowledgeBase = []; // Reset just in case
-  
-  if (rawPolicies.length === 0) {
-    console.log("ℹ️ No policies found or sheet not set up. RAG initialized empty.");
-    return;
+/** Runs `worker` over `items` with at most `limit` in flight at once. */
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  async function pump() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index], index);
+    }
   }
 
-  try {
-    for (const policy of rawPolicies) {
-      // Embed the question (and optionally the answer context) so it matches user queries better
-      const textToEmbed = `Question: ${policy.question}\nAnswer: ${policy.answer}`;
-      const embedding = await generateEmbeddings(textToEmbed);
-      
-      policyKnowledgeBase.push({
-        question: policy.question,
-        answer: policy.answer,
-        embedding: embedding
-      });
-    }
-  } catch (error) {
-    console.error("❌ Fatal error during RAG initialization. Aborting policy loading.", error.message);
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, pump));
+  return results;
+}
+
+async function fetchPolicies() {
+  const rows = await loadSheet({ title: config.google.policySheetTitle });
+  if (!rows) return [];
+
+  return rows
+    .map((row) => ({
+      question: (row.get('Question') || '').trim(),
+      answer: (row.get('Answer') || '').trim(),
+    }))
+    .filter((policy) => policy.question && policy.answer);
+}
+
+async function buildIndex() {
+  console.log('⏳ [RAG] Fetching policies from Google Sheets...');
+  const policies = await fetchPolicies();
+
+  if (policies.length === 0) {
+    console.log('ℹ️  [RAG] No policies found. Knowledge base is empty.');
     policyKnowledgeBase = [];
     return;
   }
-  
-  console.log(`✅ [RAG] Initialized ${policyKnowledgeBase.length} policies with embeddings.`);
-  
-  if (policyKnowledgeBase.length > 0) {
-    console.log("აი, როგორ გამოიყურება პირველი წესის ვექტორი (Embedding):");
-    console.log(policyKnowledgeBase[0].embedding);
+
+  let failures = 0;
+  const embedded = await mapWithConcurrency(policies, config.rag.embedConcurrency, async (policy) => {
+    try {
+      const embedding = await embed(`Question: ${policy.question}\nAnswer: ${policy.answer}`);
+      return { ...policy, embedding };
+    } catch (err) {
+      // Tolerate partial failure: one bad row should not blank the whole index.
+      failures += 1;
+      console.warn(`⚠️  [RAG] Could not embed "${policy.question}":`, err.message);
+      return null;
+    }
+  });
+
+  const nextIndex = embedded.filter(Boolean);
+
+  if (nextIndex.length === 0) {
+    console.error('❌ [RAG] Every policy failed to embed. Keeping the previous index.');
+    return;
   }
+
+  // Swap atomically so in-flight lookups never observe a half-built index.
+  policyKnowledgeBase = nextIndex;
+  console.log(
+    `✅ [RAG] Indexed ${nextIndex.length}/${policies.length} policies` +
+      (failures ? ` (${failures} failed)` : '') +
+      `, ${nextIndex[0].embedding.length}-dimension vectors.`
+  );
 }
 
 /**
- * Finds the most relevant policy given a user query.
- * Compares the embedded user query with the embedded policies using Cosine Similarity.
+ * Builds the index once. Concurrent callers share the same promise, and a failed
+ * attempt is not cached so a later request can retry.
+ */
+function initializeRAG() {
+  if (!initPromise) {
+    initPromise = buildIndex().catch((err) => {
+      console.error('❌ [RAG] Initialization failed:', err.message);
+      initPromise = null;
+    });
+
+    if (config.rag.refreshIntervalMs > 0 && !refreshTimer) {
+      refreshTimer = setInterval(() => {
+        buildIndex().catch((err) => console.warn('⚠️  [RAG] Refresh failed:', err.message));
+      }, config.rag.refreshIntervalMs);
+      refreshTimer.unref(); // never hold the process open
+    }
+  }
+  return initPromise;
+}
+
+/** Rebuilds the index on demand (used by the admin refresh route). */
+async function refreshRAG() {
+  await buildIndex();
+  return policyKnowledgeBase.length;
+}
+
+/**
+ * Finds the policy best matching a query.
+ *
+ * Returns a structured result rather than a string. The old version returned
+ * either prose or a JSON-encoded error string, and because that error string is
+ * truthy, callers used it as a reply — customers were shown a literal
+ * `{"error":"No relevant policy found"}`.
+ *
+ * @returns {Promise<{found: boolean, question?: string, answer?: string, score?: number}>}
  */
 async function findRelevantPolicy(userQuery) {
-  if (policyKnowledgeBase.length === 0) {
-    return JSON.stringify({ error: "No relevant policy found" });
+  // Wait for a cold-start index rather than reporting a false negative.
+  await initializeRAG();
+
+  if (policyKnowledgeBase.length === 0 || !userQuery) {
+    return { found: false };
   }
 
   let queryEmbedding;
   try {
-    queryEmbedding = await generateEmbeddings(userQuery);
-  } catch (error) {
-    return JSON.stringify({ error: "No relevant policy found" });
+    queryEmbedding = await embedQuery(userQuery);
+  } catch (err) {
+    console.warn('⚠️  [RAG] Could not embed query:', err.message);
+    return { found: false };
   }
 
-  let bestMatch = null;
-  let highestScore = -1;
-
+  let best = null;
+  let bestScore = -1;
   for (const policy of policyKnowledgeBase) {
     const score = cosineSimilarity(queryEmbedding, policy.embedding);
-    if (score > highestScore) {
-      highestScore = score;
-      bestMatch = policy;
+    if (score > bestScore) {
+      bestScore = score;
+      best = policy;
     }
   }
 
-  // We set a threshold for similarity so we don't return completely irrelevant stuff
-  // Usually >= 0.70 is decent for text-embedding-004
-  if (highestScore > 0.65 && bestMatch) {
-    console.log(`🔍 [RAG] Found matching policy (Score: ${(highestScore*100).toFixed(1)}%):`, bestMatch.question);
-    return `Relevant Policy found:\nQ: ${bestMatch.question}\nA: ${bestMatch.answer}`;
-  } else {
-    console.log(`🔍 [RAG] No policy matched strongly enough. Highest score was ${(highestScore*100).toFixed(1)}%`);
-    return JSON.stringify({ error: "No relevant policy found" });
+  if (best && bestScore > config.rag.similarityThreshold) {
+    console.log(`🔍 [RAG] Matched "${best.question}" (${(bestScore * 100).toFixed(1)}%)`);
+    return { found: true, question: best.question, answer: best.answer, score: bestScore };
+  }
+
+  console.log(`🔍 [RAG] No match above threshold (best ${(bestScore * 100).toFixed(1)}%)`);
+  return { found: false };
+}
+
+function getIndexSize() {
+  return policyKnowledgeBase.length;
+}
+
+function stopRefresh() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
   }
 }
 
 module.exports = {
   initializeRAG,
-  findRelevantPolicy
+  refreshRAG,
+  findRelevantPolicy,
+  getIndexSize,
+  stopRefresh,
+  cosineSimilarity,
 };

@@ -5,8 +5,7 @@ import CartSidebar from './components/CartSidebar';
 import AIChatWidget from './components/AIChatWidget';
 import AdminDashboard from './components/AdminDashboard';
 import AuthModal from './components/AuthModal';
-
-const API_URL = import.meta.env.VITE_API_URL || (['localhost', '127.0.0.1'].includes(window.location.hostname) ? 'http://localhost:3000' : 'https://telegrambot-1ufk.onrender.com');
+import { API_URL, clearToken, getToken } from './lib/api';
 
 const fallbackProducts = [
   { id: 1, name: "Apple iPhone 15 Pro", category: "Smartphones", description: "Forged in titanium and featuring the groundbreaking A17 Pro chip.", price: 999, rating: 4.9, inStock: true, image: "https://images.unsplash.com/photo-1695048133142-1a20484d2569?q=80&w=400&auto=format&fit=crop" },
@@ -22,8 +21,14 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [cartItems, setCartItems] = useState(() => {
-    const saved = localStorage.getItem('techstore_cart');
-    return saved ? JSON.parse(saved) : [];
+    // Corrupt or hand-edited localStorage should not white-screen the whole store.
+    try {
+      const saved = localStorage.getItem('techstore_cart');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
   });
 
   useEffect(() => {
@@ -39,17 +44,16 @@ export default function App() {
   // Check auth status on mount
   useEffect(() => {
     const checkAuth = async () => {
-      const token = localStorage.getItem('techstore_token');
-      if (!token) return;
+      if (!getToken()) return;
       try {
         const res = await fetch(`${API_URL}/api/auth/me`, {
-          headers: { 'Authorization': `Bearer ${token}` }
+          headers: { 'Authorization': `Bearer ${getToken()}` }
         });
         if (res.ok) {
           const data = await res.json();
           setUser(data.user);
         } else {
-          localStorage.removeItem('techstore_token');
+          clearToken();
         }
       } catch (err) {
         console.warn('Auth check failed:', err);
@@ -146,7 +150,7 @@ export default function App() {
         user={user}
         onLoginClick={() => setIsAuthModalOpen(true)}
         onLogout={() => {
-          localStorage.removeItem('techstore_token');
+          clearToken();
           setUser(null);
         }}
       />

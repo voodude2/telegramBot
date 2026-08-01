@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-
-const API_URL = import.meta.env.VITE_API_URL || (['localhost', '127.0.0.1'].includes(window.location.hostname) ? 'http://localhost:3000' : 'https://telegrambot-1ufk.onrender.com');
+import { API_URL, SESSION_KEY, authHeaders } from '../lib/api';
 
 export default function AIChatWidget({ isOpen, setIsOpen, onAction, user }) {
   const [messages, setMessages] = useState([
@@ -37,19 +36,23 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction, user }) {
 
   const messagesEndRef = useRef(null);
 
-  // Initialize persistent session ID
+  // Restore the last server-issued session for anonymous visitors. Session ids are
+  // now minted and signed by the server, so the client no longer invents its own —
+  // a self-chosen id could be used to read someone else's conversation.
+  // Signed-in users are bound to their account server-side from the bearer token.
   useEffect(() => {
     if (user && user.id) {
-      setSessionId(user.id);
+      setSessionId('');
     } else {
-      let savedSession = localStorage.getItem('techstore_ai_session');
-      if (!savedSession) {
-        savedSession = `web_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        localStorage.setItem('techstore_ai_session', savedSession);
-      }
-      setSessionId(savedSession);
+      setSessionId(localStorage.getItem(SESSION_KEY) || '');
     }
   }, [user]);
+
+  const rememberSession = (id) => {
+    if (!id || user) return;
+    localStorage.setItem(SESSION_KEY, id);
+    setSessionId(id);
+  };
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -75,13 +78,14 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction, user }) {
     setLoading(true);
 
     try {
+      // The display name is read from the bearer token server-side, so it is no
+      // longer sent in the body.
       const response = await fetch(`${API_URL}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           message: messageText,
-          sessionId: sessionId,
-          userName: user ? user.name : undefined,
+          sessionId: sessionId || undefined,
           media: selectedFile ? { data: selectedFile.data, mimeType: selectedFile.mimeType } : undefined
         })
       });
@@ -103,52 +107,61 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction, user }) {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
-      
+
       let aiText = '';
+      // A network chunk can end mid-line, so hold the remainder until the rest
+      // of that SSE event arrives instead of trying to parse a partial JSON line.
+      let buffer = '';
+
+      const render = () => setMessages(prev => prev.map(msg =>
+        msg.id === aiMsgId ? { ...msg, text: aiText } : msg
+      ));
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        
-        const chunkStr = decoder.decode(value, { stream: true });
-        const lines = chunkStr.split('\n');
-        
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              
-              if (data.text) {
-                aiText += data.text;
-                setMessages(prev => prev.map(msg => 
-                  msg.id === aiMsgId ? { ...msg, text: aiText } : msg
-                ));
-              }
-              
-              if (data.done) {
-                if (data.finalReply) {
-                  aiText = data.finalReply;
-                  setMessages(prev => prev.map(msg => 
-                    msg.id === aiMsgId ? { ...msg, text: aiText } : msg
-                  ));
-                }
-                
-                if (data.actions && data.actions.length > 0 && onAction) {
-                  data.actions.forEach(action => {
-                    onAction(action);
-                  });
-                }
-              }
-              
-              if (data.error) {
-                aiText = data.error;
-                setMessages(prev => prev.map(msg => 
-                  msg.id === aiMsgId ? { ...msg, text: aiText } : msg
-                ));
-              }
-            } catch (e) {
-              console.error('Error parsing SSE chunk:', e);
+          if (!line.startsWith('data: ')) continue;
+
+          try {
+            const data = JSON.parse(line.slice(6));
+
+            // The server issues the signed session id; store it for next time.
+            if (data.sessionId) rememberSession(data.sessionId);
+
+            // A model attempt failed after streaming. Drop what it sent, or the
+            // retry's answer would be appended to a half-finished one.
+            if (data.reset) {
+              aiText = '';
+              render();
             }
+
+            if (data.text) {
+              aiText += data.text;
+              render();
+            }
+
+            if (data.done) {
+              if (data.finalReply) {
+                aiText = data.finalReply;
+                render();
+              }
+              if (data.actions?.length && onAction) {
+                data.actions.forEach(action => onAction(action));
+              }
+            }
+
+            if (data.error) {
+              aiText = data.error;
+              render();
+            }
+          } catch (e) {
+            console.error('Error parsing SSE chunk:', e);
           }
         }
       }

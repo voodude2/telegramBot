@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-
-const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://telegrambot-1ufk.onrender.com');
+import { API_URL } from '../lib/api';
 
 export default function AdminDashboard({ onBack }) {
   // State for all 4 API responses
@@ -36,13 +35,17 @@ export default function AdminDashboard({ onBack }) {
         fetch(`${API_URL}/api/admin/memories`, { headers })
       ]);
 
-      if (statsRes.status === 401 || questionsRes.status === 401) {
+      const responses = [statsRes, questionsRes, costsRes, timelineRes, memoriesRes];
+
+      // Any 401 means the key is wrong or missing — checking only the first two
+      // let an unauthorized dashboard render as a generic failure.
+      if (responses.some(r => r.status === 401 || r.status === 503)) {
         setUnauthorized(true);
         setLoading(false);
         return;
       }
 
-      if (!statsRes.ok || !questionsRes.ok || !costsRes.ok || !timelineRes.ok || !memoriesRes.ok) {
+      if (responses.some(r => !r.ok)) {
         throw new Error("Failed to fetch dashboard data");
       }
 

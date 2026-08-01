@@ -1,98 +1,141 @@
 const { JWT } = require('google-auth-library');
-
-// In-memory cache setup
-let cacheData = null;
-let lastFetchTime = 0;
-const CACHE_TTL = 30 * 1000; // 30 seconds cache
+const config = require('../config');
 
 /**
- * Fetches products from Google Sheet.
- * Caches the result in memory for 15 seconds.
+ * Google Sheets access for the product catalogue and the policy sheet.
+ *
+ * ARCHITECTURE NOTE: Sheets is a fine admin UI but a fragile production read
+ * path — one API blip and every AI product search returns nothing. The stale-cache
+ * fallback below softens that, but the durable fix is to make Postgres the read
+ * path and Sheets an import source.
+ */
+
+const CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS, 10) || 30 * 1000;
+
+let cacheData = null;
+let lastFetchTime = 0;
+/** Shared promise for an in-flight refresh, so N concurrent misses make 1 API call. */
+let inFlight = null;
+
+function hasCredentials() {
+  return Boolean(
+    config.google.serviceAccountEmail && config.google.privateKey && config.google.spreadsheetId
+  );
+}
+
+async function openDocument() {
+  // Dynamic import: google-spreadsheet is ESM-only and this project is CommonJS.
+  const { GoogleSpreadsheet } = await import('google-spreadsheet');
+  const auth = new JWT({
+    email: config.google.serviceAccountEmail,
+    key: config.google.privateKey.replace(/\\n/g, '\n'),
+    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+  });
+
+  const doc = new GoogleSpreadsheet(config.google.spreadsheetId, auth);
+  await doc.loadInfo();
+  return doc;
+}
+
+/**
+ * Loads rows from a sheet tab by title, or the first tab when title is null.
+ * @returns {Promise<Array|null>} null when the sheet is unavailable.
+ */
+async function loadSheet({ title = null } = {}) {
+  if (!hasCredentials()) {
+    console.warn('⚠️  Google Sheets credentials are not configured.');
+    return null;
+  }
+
+  try {
+    const doc = await openDocument();
+    const sheet = title
+      ? Object.values(doc.sheetsById).find((s) => s.title === title)
+      : doc.sheetsByIndex[0];
+
+    if (!sheet) {
+      console.warn(`⚠️  Sheet tab "${title}" was not found.`);
+      return null;
+    }
+    return await sheet.getRows();
+  } catch (err) {
+    console.error(`❌ Error reading sheet${title ? ` "${title}"` : ''}:`, err.message);
+    return null;
+  }
+}
+
+function parseBoolean(raw) {
+  if (typeof raw === 'string') {
+    const value = raw.trim().toLowerCase();
+    return value === 'true' || value === '1' || value === 'yes';
+  }
+  return Boolean(raw);
+}
+
+function parseProductRow(row, index) {
+  return {
+    id: parseInt(row.get('id'), 10) || index + 1,
+    name: row.get('name') || '',
+    description: row.get('description') || '',
+    price: parseFloat(row.get('price')) || 0,
+    category: row.get('category') || 'General',
+    image: row.get('image') || '',
+    inStock: parseBoolean(row.get('inStock')),
+    rating: parseFloat(row.get('rating')) || 5.0,
+  };
+}
+
+async function fetchProducts() {
+  const rows = await loadSheet({ title: config.google.productsSheetTitle });
+
+  if (!rows) {
+    // Prefer stale data over no data — an empty catalogue makes the AI claim we
+    // sell nothing, which is worse than slightly out-of-date prices.
+    if (cacheData) {
+      console.warn('⚠️  Returning stale product cache.');
+      return cacheData;
+    }
+    return [];
+  }
+
+  const products = rows.map(parseProductRow);
+  console.log(`✅ Fetched ${products.length} products from Google Sheets.`);
+  return products;
+}
+
+/**
+ * Products, memoised for CACHE_TTL_MS.
+ *
+ * Concurrent callers on a cold cache share one fetch rather than each firing
+ * their own request at the Sheets API.
  */
 async function getProducts(forceRefresh = false) {
   const now = Date.now();
 
-  // Return cached data if still valid and forceRefresh is false
-  if (!forceRefresh && cacheData && (now - lastFetchTime < CACHE_TTL)) {
+  if (!forceRefresh && cacheData && now - lastFetchTime < CACHE_TTL_MS) {
     return cacheData;
   }
+  if (inFlight) return inFlight;
 
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const privateKey = process.env.GOOGLE_PRIVATE_KEY;
-  const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID || process.env.SPREADSHEET_ID;
-
-  // Fallback to empty array if credentials are not fully configured
-  if (!email || !privateKey || !spreadsheetId) {
-    console.warn("⚠️ Google Sheets credentials not configured in .env. Returning empty products array.");
-    cacheData = [];
-    lastFetchTime = now;
-    return cacheData;
-  }
-
-  try {
-    // Dynamic import to support ES Module dependency in CommonJS Node environment
-    const { GoogleSpreadsheet } = await import('google-spreadsheet');
-
-    // Authenticate with Google Service Account
-    const serviceAccountAuth = new JWT({
-      email: email,
-      key: privateKey.replace(/\\n/g, '\n'),
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-    });
-
-    const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
-    await doc.loadInfo();
-
-    // Use the first sheet tab
-    const sheet = doc.sheetsByIndex[0];
-    const rows = await sheet.getRows();
-
-    const parsedProducts = rows.map((row, index) => {
-      const rawInStock = row.get('inStock');
-      const inStockBool = typeof rawInStock === 'string'
-        ? (rawInStock.trim().toLowerCase() === 'true' || rawInStock.trim() === '1' || rawInStock.trim().toLowerCase() === 'yes')
-        : Boolean(rawInStock);
-
-      return {
-        id: parseInt(row.get('id'), 10) || (index + 1),
-        name: row.get('name') || '',
-        description: row.get('description') || '',
-        price: parseFloat(row.get('price')) || 0,
-        category: row.get('category') || 'General',
-        image: row.get('image') || '',
-        inStock: inStockBool,
-        rating: parseFloat(row.get('rating')) || 5.0,
-      };
-    });
-
-    cacheData = parsedProducts;
-    lastFetchTime = now;
-    console.log(`✅ Successfully fetched ${parsedProducts.length} products from Google Sheets.`);
-    return cacheData;
-  } catch (error) {
-    console.error("❌ Error fetching products from Google Sheets:", error.message);
-    
-    // If we have stale cache, return it; otherwise return empty array
-    if (cacheData) {
-      console.warn("⚠️ Returning stale cache data due to error.");
-      return cacheData;
+  inFlight = (async () => {
+    try {
+      const products = await fetchProducts();
+      cacheData = products;
+      lastFetchTime = Date.now();
+      return products;
+    } finally {
+      inFlight = null;
     }
-    
-    cacheData = [];
-    lastFetchTime = now;
-    return cacheData;
-  }
+  })();
+
+  return inFlight;
 }
 
-/**
- * Gets a single product by ID
- */
 async function getProductById(id) {
-  const productsList = await getProducts();
-  return productsList.find(p => p.id === parseInt(id, 10));
+  const products = await getProducts();
+  const numericId = parseInt(id, 10);
+  if (Number.isNaN(numericId)) return undefined;
+  return products.find((p) => p.id === numericId);
 }
 
-module.exports = {
-  getProducts,
-  getProductById,
-};
+module.exports = { getProducts, getProductById, loadSheet };

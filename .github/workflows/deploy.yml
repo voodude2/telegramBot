@@ -24,12 +24,20 @@ jobs:
         working-directory: backend
         run: npm ci
 
+      - name: Syntax Check
+        working-directory: backend
+        run: npm run lint
+
       - name: Run Tests
         working-directory: backend
         env:
+          NODE_ENV: test
+          # The app no longer crashes on missing credentials, so these only keep
+          # the suite from exercising the "unconfigured" branch everywhere.
           GEMINI_API_KEY: "dummy_key"
           MEM0_API_KEY: "dummy_key"
           TELEGRAM_BOT_TOKEN: "dummy_key"
+          JWT_SECRET: "ci_only_secret_not_used_in_any_deployment"
         run: npm test
 
   deploy:
@@ -38,8 +46,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Deploy Hooks
+        env:
+          BACKEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          FRONTEND_HOOK: ${{ secrets.RENDER_FRONTEND_HOOK_URL }}
         run: |
-          echo "Triggering Backend Deploy..."
-          curl -X POST -s "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
-          echo "Triggering Frontend Deploy..."
-          curl -X POST -s "${{ secrets.RENDER_FRONTEND_HOOK_URL }}"
+          set -euo pipefail
+          # --fail so a rejected hook fails the job. Without it curl exits 0 on an
+          # HTTP error and a broken deploy reports as green.
+          if [ -z "$BACKEND_HOOK" ]; then echo "::error::RENDER_DEPLOY_HOOK_URL is not set"; exit 1; fi
+          echo "Triggering backend deploy..."
+          curl --fail --silent --show-error -X POST "$BACKEND_HOOK" > /dev/null
+
+          if [ -n "$FRONTEND_HOOK" ]; then
+            echo "Triggering frontend deploy..."
+            curl --fail --silent --show-error -X POST "$FRONTEND_HOOK" > /dev/null
+          else
+            echo "::warning::RENDER_FRONTEND_HOOK_URL is not set, skipping frontend deploy"
+          fi

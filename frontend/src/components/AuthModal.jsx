@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { apiFetch, setToken } from '../lib/api';
+
+const MIN_PASSWORD_LENGTH = 8;
 
 export default function AuthModal({ isOpen, onClose, onLoginSuccess }) {
   const [isLogin, setIsLogin] = useState(true);
@@ -13,38 +16,31 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }) {
 
   if (!isOpen) return null;
 
-  const API_URL = import.meta.env.VITE_API_URL || (['localhost', '127.0.0.1'].includes(window.location.hostname) ? 'http://localhost:3000' : 'https://telegrambot-1ufk.onrender.com');
-
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    // Mirror the server's minimum so the user is told before a round-trip.
+    if (!isLogin && formData.password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+      return;
+    }
+
     setLoading(true);
     setError('');
 
     const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
-    const payload = isLogin 
+    const payload = isLogin
       ? { email: formData.email, password: formData.password }
       : formData;
 
     try {
-      const res = await fetch(`${API_URL}${endpoint}`, {
+      const data = await apiFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      
-      let data;
-      const contentType = res.headers.get("content-type");
-      if (contentType && contentType.indexOf("application/json") !== -1) {
-        data = await res.json();
-      } else {
-        data = { error: `Server error: ${res.status}` };
-      }
-      
-      if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed');
-      }
 
-      localStorage.setItem('techstore_token', data.token);
+      setToken(data.token);
       onLoginSuccess(data.user);
       onClose();
     } catch (err) {
@@ -109,8 +105,10 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }) {
           <div>
             <label className="block text-sm text-text-muted mb-1">Password</label>
             <input 
-              type="password" 
-              required 
+              type="password"
+              required
+              minLength={isLogin ? undefined : MIN_PASSWORD_LENGTH}
+              autoComplete={isLogin ? 'current-password' : 'new-password'}
               value={formData.password}
               onChange={e => setFormData({...formData, password: e.target.value})}
               className="w-full bg-bg-dark/50 border border-white/10 rounded-lg px-4 py-2.5 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 text-white placeholder-white/30 transition-all"
