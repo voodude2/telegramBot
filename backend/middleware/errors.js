@@ -5,7 +5,11 @@ function securityHeaders(_req, res, next) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  // 'cross-origin', not 'same-site': this is a public API consumed by a frontend
+  // on a different host. Render gives each service its own *.onrender.com
+  // subdomain and onrender.com is a public suffix, so the two are not even
+  // same-site. CORS is what governs access here; CORP must not second-guess it.
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
   res.removeHeader('X-Powered-By');
   next();

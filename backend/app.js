@@ -12,9 +12,39 @@ const app = express();
 app.set('trust proxy', 1);
 
 const allowAllOrigins = config.corsOrigins.includes('*');
+console.log(
+  `🌐 CORS allowlist: ${allowAllOrigins ? '* (all origins)' : config.corsOrigins.join(', ')}`
+);
+
+/**
+ * A rejected origin produces a response with no Access-Control-Allow-Origin, which
+ * the browser blocks *silently* — the server sees a normal 200 and logs nothing.
+ * That made a FRONTEND_URL typo undiagnosable from the logs, so every distinct
+ * rejected origin is reported once here.
+ */
+const reportedOrigins = new Set();
 app.use(
   cors({
-    origin: allowAllOrigins ? '*' : config.corsOrigins,
+    origin(origin, callback) {
+      // No Origin header: same-origin, curl, or a server-to-server call.
+      if (!origin) return callback(null, true);
+      if (allowAllOrigins) return callback(null, true);
+
+      const normalized = config.normalizeOrigin(origin);
+      if (config.isOriginAllowed(normalized)) return callback(null, true);
+
+      if (!reportedOrigins.has(normalized)) {
+        reportedOrigins.add(normalized);
+        console.warn(
+          `⛔ CORS: blocked origin "${normalized}". ` +
+            `FRONTEND_URL currently allows: ${config.corsOrigins.join(', ')}. ` +
+            `If that origin is your frontend, add it to FRONTEND_URL.`
+        );
+      }
+      // Resolve false rather than erroring: the request still completes without
+      // the CORS header, which is what the browser expects for a denial.
+      return callback(null, false);
+    },
     methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     maxAge: 86400,

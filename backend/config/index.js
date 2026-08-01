@@ -19,6 +19,39 @@ function clean(value) {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+/**
+ * Reduces an allowlist entry to the exact form a browser sends in `Origin`:
+ * lowercase scheme and host, no trailing slash, no path.
+ */
+function normalizeOrigin(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  if (trimmed === '*') return '*';
+
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    // Wildcards are not valid URLs, so normalise those by hand.
+    if (withScheme.includes('*')) {
+      return withScheme.toLowerCase().replace(/\/+$/, '');
+    }
+    const url = new URL(withScheme);
+    return `${url.protocol}//${url.host}`.toLowerCase();
+  } catch {
+    return withScheme.toLowerCase().replace(/\/+$/, '');
+  }
+}
+
+/** Builds a matcher for one allowlist entry, supporting a leading `*.` wildcard. */
+function originMatcher(pattern) {
+  if (!pattern.includes('*')) {
+    return (origin) => origin === pattern;
+  }
+  const regex = new RegExp(
+    `^${pattern.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^.]+')}$`
+  );
+  return (origin) => regex.test(origin);
+}
+
 const fatal = [];
 
 /**
@@ -59,9 +92,13 @@ const config = {
   port: parseInt(process.env.PORT, 10) || 3000,
 
   // Comma-separated list. '*' is only tolerated outside production.
+  // Entries are normalised because a browser Origin header is always a bare
+  // scheme://host[:port] — a trailing slash or stray capital in the env var
+  // silently fails to match, which is exactly how this broke in production.
+  // A leading '*.' wildcard is supported for subdomains, e.g. https://*.onrender.com
   corsOrigins: (clean(process.env.FRONTEND_URL) || '*')
     .split(',')
-    .map((o) => o.trim())
+    .map((o) => normalizeOrigin(o))
     .filter(Boolean),
 
   jwt: {
@@ -179,4 +216,11 @@ if (!config.gemini.apiKey) {
   console.warn('⚠️  GEMINI_API_KEY is not set. AI chat and RAG will be unavailable.');
 }
 
+config.isOriginAllowed = (() => {
+  if (config.corsOrigins.includes('*')) return () => true;
+  const matchers = config.corsOrigins.map(originMatcher);
+  return (origin) => matchers.some((match) => match(origin));
+})();
+
 module.exports = config;
+module.exports.normalizeOrigin = normalizeOrigin;
