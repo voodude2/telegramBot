@@ -229,8 +229,8 @@ const adminAuth = (req, res, next) => {
 // Get all memories from Mem0
 app.get('/api/admin/memories', adminAuth, async (req, res) => {
   try {
-    const mems = await memory.getAll({ app_id: "techstore" });
-    res.json(mems || []);
+    const mems = await memory.getAll({ filters: { app_id: "techstore" } });
+    res.json(mems.results || []);
   } catch (err) {
     console.error('Mem0 fetch error:', err);
     res.status(500).json({ error: 'Failed to fetch memories' });
@@ -431,7 +431,7 @@ async function processAIChat({ sessionId, userMessage, platform = 'web', media =
 
   // Retrieve long-term memory facts from Mem0
   try {
-    const mem0Results = await memory.search(userMessage, { user_id: sessionId, app_id: "techstore" });
+    const mem0Results = await memory.search(userMessage, { filters: { user_id: sessionId, app_id: "techstore" } });
     if (mem0Results && mem0Results.length > 0) {
       const memories = mem0Results.map(r => r.memory || r.content).filter(Boolean).join('\n- ');
       if (memories) {
@@ -792,12 +792,21 @@ app.listen(PORT, async () => {
   await initializeRAG();
 });
 
-// Start Telegram Bot
-bot.launch().then(() => {
-  console.log('Telegram bot is running');
-}).catch((err) => {
-  console.error('Failed to start Telegram bot:', err);
-});
+// Start Telegram Bot with retry logic for 409 Conflicts
+const startTelegramBot = async (retries = 3) => {
+  try {
+    await bot.launch({ dropPendingUpdates: true });
+    console.log('✅ Telegram bot is running');
+  } catch (err) {
+    if (err.response && err.response.error_code === 409 && retries > 0) {
+      console.warn(`⚠️ Telegram 409 Conflict. Retrying in 5s... (${retries} retries left)`);
+      setTimeout(() => startTelegramBot(retries - 1), 5000);
+    } else {
+      console.error('❌ Failed to start Telegram bot:', err);
+    }
+  }
+};
+startTelegramBot();
 
 // Graceful Shutdown
 process.once('SIGINT', () => {
