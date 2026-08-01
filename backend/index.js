@@ -42,21 +42,41 @@ async function saveChatHistory(chatId, newHistory) {
   // Extract long-term facts autonomously using Mem0
   try {
     if (newHistory.length >= 2) {
-      const lastUser = newHistory[newHistory.length - 2];
-      const lastBot = newHistory[newHistory.length - 1];
-      if (lastUser.role === 'user' && lastBot.role === 'model') {
-        // Only extract text parts, ignoring function calls/responses
-        const userText = lastUser.parts.filter(p => p.text).map(p => p.text).join(' ');
-        const botText = lastBot.parts.filter(p => p.text).map(p => p.text).join(' ');
-        
-        if (userText && botText) {
-          const messages = [
-            { role: "user", content: userText },
-            { role: "assistant", content: botText }
-          ];
-          // Asynchronously add to Mem0 without blocking the chat flow
-          memory.add(messages, { user_id: chatId, app_id: "techstore" }).catch(err => console.warn("⚠️ Mem0 extraction failed:", err.message));
+      let userText = "";
+      let botText = "";
+      
+      // Find the most recent text message from the model
+      for (let i = newHistory.length - 1; i >= 0; i--) {
+        if (newHistory[i].role === 'model') {
+          const text = newHistory[i].parts?.filter(p => p.text).map(p => p.text).join(' ');
+          if (text) {
+            botText = text;
+            break;
+          }
         }
+      }
+      
+      // Find the most recent text message from the user
+      for (let i = newHistory.length - 1; i >= 0; i--) {
+        if (newHistory[i].role === 'user') {
+          // Ignore functionResponses which also use the 'user' role
+          if (newHistory[i].parts?.some(p => p.functionResponse)) continue;
+          
+          const text = newHistory[i].parts?.filter(p => p.text).map(p => p.text).join(' ');
+          if (text) {
+            userText = text;
+            break;
+          }
+        }
+      }
+
+      if (userText && botText) {
+        const messages = [
+          { role: "user", content: userText },
+          { role: "assistant", content: botText }
+        ];
+        // Asynchronously add to Mem0 without blocking the chat flow
+        memory.add(messages, { user_id: chatId, app_id: "techstore" }).catch(err => console.warn("⚠️ Mem0 extraction failed:", err.message));
       }
     }
   } catch (err) {
