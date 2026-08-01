@@ -889,11 +889,16 @@ bot.on('voice', async (ctx) => {
 });
 
 // Start Express Server
-app.listen(PORT, async () => {
-  console.log(`Express server is running on http://localhost:${PORT}`);
-  // Initialize RAG embeddings from Google Sheets
-  await initializeRAG();
-});
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, async () => {
+    console.log(`Express server is running on http://localhost:${PORT}`);
+    // Initialize RAG embeddings from Google Sheets
+    await initializeRAG();
+  });
+}
+
+// Export app for testing
+module.exports = app;
 
 // Start Telegram Bot with retry logic for 409 Conflicts
 const startTelegramBot = async (retries = 3) => {
@@ -909,7 +914,9 @@ const startTelegramBot = async (retries = 3) => {
     }
   }
 };
-startTelegramBot();
+if (process.env.NODE_ENV !== 'test') {
+  startTelegramBot();
+}
 
 // Graceful Shutdown
 process.once('SIGINT', () => {
