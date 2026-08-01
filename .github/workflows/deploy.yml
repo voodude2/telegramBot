@@ -26,6 +26,10 @@ jobs:
 
       - name: Run Tests
         working-directory: backend
+        env:
+          GEMINI_API_KEY: "dummy_key"
+          MEM0_API_KEY: "dummy_key"
+          TELEGRAM_BOT_TOKEN: "dummy_key"
         run: npm test
 
   deploy:
