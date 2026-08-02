@@ -186,23 +186,43 @@ async function findRelevantPolicy(userQuery) {
     return { found: false };
   }
 
-  let best = null;
-  let bestScore = -1;
-  for (const policy of policyKnowledgeBase) {
-    const score = cosineSimilarity(queryEmbedding, policy.embedding);
-    if (score > bestScore) {
-      bestScore = score;
-      best = policy;
-    }
+  const ranked = policyKnowledgeBase
+    .map((policy) => ({
+      question: policy.question,
+      answer: policy.answer,
+      score: cosineSimilarity(queryEmbedding, policy.embedding),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const best = ranked[0];
+
+  // Return the top matches, not just the single best. A customer routinely asks
+  // two things at once ("can I return this, and do you ship abroad?"); with
+  // top-1 retrieval the model only ever saw half the answer and either ignored
+  // the rest of the question or filled the gap from its own knowledge.
+  const matches = ranked
+    .filter((match) => match.score > config.rag.similarityThreshold)
+    .slice(0, config.rag.topK);
+
+  if (matches.length === 0) {
+    console.log(`🔍 [RAG] No match above threshold (best ${(best.score * 100).toFixed(1)}%)`);
+    return { found: false, matches: [] };
   }
 
-  if (best && bestScore > config.rag.similarityThreshold) {
-    console.log(`🔍 [RAG] Matched "${best.question}" (${(bestScore * 100).toFixed(1)}%)`);
-    return { found: true, question: best.question, answer: best.answer, score: bestScore };
-  }
+  console.log(
+    `🔍 [RAG] ${matches.length} match(es): ` +
+      matches.map((m) => `"${m.question}" (${(m.score * 100).toFixed(1)}%)`).join(', ')
+  );
 
-  console.log(`🔍 [RAG] No match above threshold (best ${(bestScore * 100).toFixed(1)}%)`);
-  return { found: false };
+  // The top-level question/answer/score keep the single-best shape that callers
+  // use for their empty-response fallback.
+  return {
+    found: true,
+    matches,
+    question: matches[0].question,
+    answer: matches[0].answer,
+    score: matches[0].score,
+  };
 }
 
 function getIndexSize() {

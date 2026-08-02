@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const config = require('../config');
+const tokenVersions = require('../lib/tokenVersions');
 
 function readBearerToken(req) {
   const header = req.headers.authorization;
@@ -9,9 +10,14 @@ function readBearerToken(req) {
   return token.length > 0 ? token : null;
 }
 
-function signUserToken(user) {
+/**
+ * @param {object} user
+ * @param {number} [tokenVersion] Embedded as `v`; bumping the account's stored
+ *   version invalidates every token issued before the bump.
+ */
+function signUserToken(user, tokenVersion = 0) {
   return jwt.sign(
-    { id: user.id, email: user.email, name: user.name },
+    { id: user.id, email: user.email, name: user.name, v: tokenVersion },
     config.jwt.secret,
     { expiresIn: config.jwt.expiresIn, issuer: config.jwt.issuer }
   );
@@ -25,27 +31,40 @@ function verifyUserToken(token) {
   }
 }
 
-/** Rejects the request unless it carries a valid user token. */
-function requireUser(req, res, next) {
-  const token = readBearerToken(req);
-  if (!token) return res.status(401).json({ error: 'No token provided' });
+/** Rejects the request unless it carries a valid, unrevoked user token. */
+async function requireUser(req, res, next) {
+  try {
+    const token = readBearerToken(req);
+    if (!token) return res.status(401).json({ error: 'No token provided' });
 
-  const decoded = verifyUserToken(token);
-  if (!decoded) return res.status(401).json({ error: 'Invalid or expired token' });
+    const decoded = verifyUserToken(token);
+    if (!decoded) return res.status(401).json({ error: 'Invalid or expired token' });
 
-  req.user = decoded;
-  next();
+    if (!(await tokenVersions.isCurrent(decoded))) {
+      return res.status(401).json({ error: 'Session has been revoked. Please sign in again.' });
+    }
+
+    req.user = decoded;
+    next();
+  } catch (err) {
+    next(err);
+  }
 }
 
 /**
- * Attaches req.user when a valid token is present, but never rejects. Used by the
- * chat endpoint, which serves both signed-in and anonymous visitors.
+ * Attaches req.user when a valid, unrevoked token is present, but never rejects.
+ * Used by the chat endpoint, which serves both signed-in and anonymous visitors.
  */
-function optionalUser(req, _res, next) {
-  const token = readBearerToken(req);
-  if (token) {
-    const decoded = verifyUserToken(token);
-    if (decoded) req.user = decoded;
+async function optionalUser(req, _res, next) {
+  try {
+    const token = readBearerToken(req);
+    if (token) {
+      const decoded = verifyUserToken(token);
+      if (decoded && (await tokenVersions.isCurrent(decoded))) req.user = decoded;
+    }
+  } catch (err) {
+    // A revocation-check failure must not block an anonymous-capable endpoint.
+    console.warn('⚠️  optionalUser check failed:', err.message);
   }
   next();
 }

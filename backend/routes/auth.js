@@ -4,6 +4,8 @@ const { redis } = require('../lib/redisClient');
 const password = require('../lib/password');
 const { requireUser, signUserToken } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimit');
+const loginGuard = require('../lib/loginGuard');
+const tokenVersions = require('../lib/tokenVersions');
 
 const router = express.Router();
 
@@ -77,11 +79,22 @@ router.post('/register', authLimiter, async (req, res, next) => {
     // check and the write, so two concurrent signups for the same address both
     // passed the check and the second silently overwrote the first.
     const created = await redis.set(userKey(email), JSON.stringify(user), { nx: true });
-    if (!created) return res.status(409).json({ error: 'Email already registered' });
+    if (!created) {
+      // Deliberately vague. A distinct "Email already registered" turns this
+      // endpoint into an account-enumeration oracle: anyone can test an address
+      // list and learn who holds an account here. The wording still tells a
+      // genuine returning user what to do.
+      return res.status(409).json({
+        error: 'That email cannot be registered. If you already have an account, please sign in.',
+      });
+    }
 
     await redis.set(`userId:${user.id}`, email);
 
-    res.status(201).json({ token: signUserToken(user), user: publicUser(user) });
+    // A brand-new account starts at version 0; reading it also covers the case
+    // where an id is somehow reused after a revocation.
+    const version = await tokenVersions.getVersion(user.id);
+    res.status(201).json({ token: signUserToken(user, version), user: publicUser(user) });
   } catch (err) {
     next(err);
   }
@@ -95,11 +108,29 @@ router.post('/login', authLimiter, async (req, res, next) => {
 
     if (!redis) return res.status(503).json({ error: 'Account storage is not configured' });
 
+    // Per-account lockout, checked before any password work is done.
+    const { locked, retryAfter } = await loginGuard.checkLock(email);
+    if (locked) {
+      res.setHeader('Retry-After', retryAfter);
+      return res.status(429).json({
+        error: 'Too many failed sign-in attempts. Please try again later.',
+      });
+    }
+
     const user = await readUser(email);
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!user) {
+      await loginGuard.recordFailure(email);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     const { valid, needsRehash } = await password.verify(pw, user.passwordHash);
-    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!valid) {
+      await loginGuard.recordFailure(email);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // A legitimate user got in, so the mistyped-password counter resets.
+    await loginGuard.clearFailures(email);
 
     // Transparently migrate legacy bcrypt records to scrypt on successful login.
     if (needsRehash) {
@@ -111,7 +142,8 @@ router.post('/login', authLimiter, async (req, res, next) => {
       }
     }
 
-    res.json({ token: signUserToken(user), user: publicUser(user) });
+    const version = await tokenVersions.getVersion(user.id);
+    res.json({ token: signUserToken(user, version), user: publicUser(user) });
   } catch (err) {
     next(err);
   }
@@ -119,6 +151,23 @@ router.post('/login', authLimiter, async (req, res, next) => {
 
 router.get('/me', requireUser, (req, res) => {
   res.json({ user: { id: req.user.id, email: req.user.email, name: req.user.name } });
+});
+
+/**
+ * Signs the account out everywhere by bumping its token version, invalidating
+ * every token issued so far. This is the remedy if a token is ever exposed —
+ * previously a leaked token stayed valid for its full 7-day lifetime.
+ */
+router.post('/logout-all', requireUser, async (req, res, next) => {
+  try {
+    const revoked = await tokenVersions.revokeAll(req.user.id);
+    if (!revoked) {
+      return res.status(503).json({ error: 'Session revocation is unavailable' });
+    }
+    res.json({ message: 'All sessions signed out. Please sign in again.' });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

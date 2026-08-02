@@ -139,33 +139,93 @@ function buildToolDeclarations(platform) {
   return tools;
 }
 
-/** Filters the live catalogue by free-text query and/or category. */
+/** Whole-word containment, so "phone" does not match inside "headphones". */
+function containsWord(haystack, needle) {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(haystack);
+}
+
+/**
+ * Scores how well a product answers a query. Higher is better; 0 means no match.
+ *
+ * Relevance ranking matters more here than in a normal search box: the system
+ * prompt instructs the model to present EVERY result it receives, so whatever
+ * comes back is what the customer is recommended. Unranked substring matching
+ * put the Sony WH-1000XM5 above the Pixel 8 Pro for the query "phone" — because
+ * "headphones" contains "phone" — and the agent duly recommended headphones to
+ * someone shopping for a phone.
+ */
+function scoreProduct(product, query) {
+  const name = product.name.toLowerCase();
+  const description = (product.description || '').toLowerCase();
+  const productCategory = (product.category || '').toLowerCase();
+  const q = query.toLowerCase().trim();
+
+  let score = 0;
+
+  if (name === q) score = 120;
+  else if (name.startsWith(q)) score = 80;
+  else if (containsWord(name, q)) score = 65;
+  else if (name.includes(q)) score = 45;
+
+  if (score === 0) {
+    // Ignore punctuation and spacing: "iphone15" should still find "iPhone 15".
+    const qStripped = q.replace(/[^a-z0-9]/g, '');
+    const nameStripped = name.replace(/[^a-z0-9]/g, '');
+    if (qStripped.length > 2 && nameStripped.includes(qStripped)) score = 40;
+  }
+
+  // Categories are a small controlled vocabulary, so substring matching is safe
+  // and necessary here: "phone" has to match the Smartphone category (it is not
+  // a whole word inside it) without matching headphones, which are Audio.
+  if (score === 0 && (productCategory.includes(q) || q.includes(productCategory))) score = 30;
+
+  // A description hit is the weakest signal — this is where "headphones" used to
+  // win a "phone" search — so it only counts as a whole word, and scores low.
+  if (score === 0 && containsWord(description, q)) score = 12;
+
+  if (score === 0) return 0;
+
+  // Tie-breakers: prefer what the customer can actually buy, then better-rated.
+  if (product.inStock) score += 5;
+  score += Math.min(product.rating || 0, 5) * 0.4;
+
+  return score;
+}
+
+/**
+ * Searches the live catalogue, ranked by relevance and capped.
+ *
+ * The cap protects both answer quality and cost: every result is serialised into
+ * the model's context, and an unfiltered call used to return the entire
+ * catalogue.
+ */
 async function executeSearch({ searchQuery, category } = {}) {
   const products = await getProducts();
+  const limit = config.limits.maxSearchResults;
 
-  return products.filter((product) => {
-    if (searchQuery) {
-      const q = String(searchQuery).toLowerCase();
-      const qStripped = q.replace(/[^a-z0-9]/g, '');
-      const nameStripped = product.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const inCategory = category
+    ? products.filter((product) => {
+        const cat = String(category).toLowerCase();
+        const productCategory = (product.category || '').toLowerCase();
+        return productCategory.includes(cat) || cat.includes(productCategory);
+      })
+    : products;
 
-      const textMatch =
-        product.name.toLowerCase().includes(q) ||
-        product.description.toLowerCase().includes(q) ||
-        product.category.toLowerCase().includes(q) ||
-        (qStripped.length > 2 && nameStripped.includes(qStripped));
+  if (!searchQuery) {
+    // A browse-style call ("what do you sell?"). Return the best of the
+    // selection rather than dumping the whole catalogue into the prompt.
+    return [...inCategory]
+      .sort((a, b) => Number(b.inStock) - Number(a.inStock) || (b.rating || 0) - (a.rating || 0))
+      .slice(0, limit);
+  }
 
-      if (!textMatch) return false;
-    }
-
-    if (category) {
-      const cat = String(category).toLowerCase();
-      const productCategory = product.category.toLowerCase();
-      if (!productCategory.includes(cat) && !cat.includes(productCategory)) return false;
-    }
-
-    return true;
-  });
+  return inCategory
+    .map((product) => ({ product, score: scoreProduct(product, String(searchQuery)) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((entry) => entry.product);
 }
 
 /**
@@ -201,8 +261,19 @@ async function executeToolCall(call, { sessionId, userMessage }) {
     }
     effect.policy = policy;
     part.functionResponse.response = policy.found
-      ? { policy: `Q: ${policy.question}\nA: ${policy.answer}` }
-      : { policy: 'No specific policy found for that topic.' };
+      ? {
+          policy: (policy.matches || [policy])
+            .map((match) => `Q: ${match.question}\nA: ${match.answer}`)
+            .join('\n\n'),
+          // Naming the source explicitly discourages the model from blending in
+          // its own assumptions about store policy.
+          source: 'Official TechStore policy documentation. Answer only from this.',
+        }
+      : {
+          policy: 'No specific policy found for that topic.',
+          instruction:
+            'Tell the customer you do not have that information and offer to connect them with support. Do NOT invent a policy.',
+        };
   } else if (call.name === 'addToCart') {
     effect.action = { type: 'ADD_TO_CART', payload: call.args };
     console.log(`✅ [${sessionId}] addToCart queued for: ${call.args?.productName}`);

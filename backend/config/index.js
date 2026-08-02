@@ -163,6 +163,9 @@ const config = {
     // Bound the in-process fallback store so a Redis outage cannot OOM the box.
     inMemorySessions: parseInt(process.env.IN_MEMORY_SESSIONS, 10) || 500,
     toolRounds: 5,
+    // Every search result is serialised into the model's context, so this caps
+    // both answer quality (too many options is a worse recommendation) and cost.
+    maxSearchResults: parseInt(process.env.MAX_SEARCH_RESULTS, 10) || 12,
   },
 
   rateLimits: {
@@ -173,6 +176,9 @@ const config = {
 
   rag: {
     similarityThreshold: parseFloat(process.env.RAG_THRESHOLD) || 0.65,
+    // Passages returned per lookup. >1 so a compound question ("returns AND
+    // international shipping?") can be answered from retrieved policy alone.
+    topK: parseInt(process.env.RAG_TOP_K, 10) || 3,
     embedConcurrency: 5,
     queryCacheSize: 200,
     // 0 disables periodic refresh; otherwise re-index the sheet on this interval.

@@ -43,31 +43,34 @@ shape a response.
 
 ## Known limits and the intended fixes
 
-### 1. Redis is holding user accounts
+### 1. Redis is the account store — a deliberate choice
 
-This is the most significant remaining issue. Upstash is a cache: no relational
-integrity, no transactions across keys, no query capability, and durability
-guarantees you would not choose for credentials. `user:${email}` as the primary
-key also means changing an email orphans the account and its reverse-lookup entry.
+Accounts live in Redis (`user:${email}`), and this is an accepted trade for
+architectural simplicity, not an oversight. What that buys and costs:
 
-**Fix:** move `users` (and later `orders`) to Postgres. Keep Redis for sessions,
-rate-limit counters and analytics counters — things that are genuinely disposable.
+**Mitigations in place**
+- Account creation is atomic via `SET NX`, standing in for a `UNIQUE` constraint.
+- Emails are normalised to one canonical form before use as a key.
+- Account records carry **no TTL** (verified: `TTL -1`), unlike sessions and analytics.
+- Passwords are scrypt-hashed, with legacy bcrypt records upgraded on login.
+- Per-account lockout and per-IP rate limiting guard the login path.
+- Sessions are revocable via `token_version:${userId}`.
 
-```sql
-CREATE TABLE users (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email         CITEXT UNIQUE NOT NULL,   -- case-insensitive, uniqueness enforced by the DB
-  name          TEXT NOT NULL,
-  password_hash TEXT NOT NULL,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
+**Residual risks to accept knowingly**
+- **Eviction.** If the Upstash database ever has an eviction policy enabled and
+  reaches its memory limit, account keys are eligible for eviction like any
+  other. Keep eviction disabled on this database.
+- **Backups.** There is no automated export. Enable Upstash backups, or run a
+  periodic `SCAN user:* → JSON` dump, or an account loss is unrecoverable.
+- **No secondary indexes.** "List all users" or "find by name" means a `SCAN`.
+- **Email as the key.** Changing an email would orphan the record and its
+  `userId:` reverse-lookup entry. There is no email-change feature today; add
+  the rename as a two-key transaction when you build one.
 
-The `UNIQUE` constraint replaces the application-level `SET NX` that currently
-stands in for atomic account creation.
-
-Migration path: dual-write to both stores, backfill, read from Postgres, drop the
-Redis keys. `pg` is already a dependency.
+**If this ever needs to change**, the migration is: dual-write to Postgres,
+backfill by `SCAN`, cut reads over, drop the Redis keys. `users(id UUID PK,
+email CITEXT UNIQUE, name, password_hash, created_at)` — the `UNIQUE` constraint
+replaces the `SET NX`. Re-add the `pg` dependency at that point.
 
 ### 2. Products live in Google Sheets
 
@@ -127,12 +130,20 @@ atomic registration, CSPRNG user ids, email normalisation, password policy,
 non-blocking password hashing, explicit CORS, security headers, a JSON error
 handler, and an admin gate on the cache-refresh route.
 
+Added since: per-account login lockout (`lib/loginGuard.js`), token revocation
+(`lib/tokenVersions.js` + `POST /api/auth/logout-all`), and a non-enumerating
+registration response.
+
 Deliberately not changed, and worth knowing about:
 
 - **Tokens are stored in `localStorage`**, so any XSS can exfiltrate them. Moving
   to an httpOnly, SameSite=Strict cookie requires CSRF protection and a frontend
-  change; it was out of scope for this pass.
-- **JWTs cannot be revoked** before they expire. A Redis deny-list keyed by token
-  id would fix this if you need forced logout.
+  change; it was out of scope for this pass. Revocation now limits the blast
+  radius: a leaked token can be killed with `logout-all` instead of staying valid
+  for its full 7 days.
+- **Revocation is eventually consistent.** Token versions are cached in-process
+  for `TOKEN_VERSION_CACHE_MS` (default 5s) to keep Redis off the hot path, so a
+  revoked token can survive that long. Set it to 0 for immediate revocation.
+- **No password reset flow.** There is no way for a user to recover an account.
 - **The Telegram bot trusts `chat.id`**, which is correct for Telegram, but those
   sessions share the Mem0 namespace with web sessions.
