@@ -13,12 +13,10 @@ const { processAIChat } = require('../services/aiChat');
 const TELEGRAM_MAX_MESSAGE = 4096;
 const MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024;
 
-const WELCOME =
-  "Hello! 👋 I am TechStore's AI consultant. I can help you choose electronics, compare prices, and answer any questions in your preferred language! How can I help you today?\n\n" +
-  '(გამარჯობა! 👋 მე ვარ TechStore-ის AI კონსულტანტი. შემიძლია გიპასუხოთ ქართულად ან ნებისმიერ ენაზე!)';
-
-const GENERIC_ERROR =
-  'Sorry, a technical error occurred. Please try again later. / ბოდიში, ტექნიკური შეცდომა მოხდა. გთხოვთ, სცადოთ მოგვიანებით.';
+// Customer-facing copy comes from the enabled locales rather than being pinned
+// to one market in engine code. See config/locales.js.
+const WELCOME = config.locales.welcome;
+const GENERIC_ERROR = config.locales.errorMessage;
 
 function stripMarkdown(text) {
   return text.replace(/\*\*/g, '').replace(/\*/g, '').replace(/_/g, '').replace(/`/g, '');

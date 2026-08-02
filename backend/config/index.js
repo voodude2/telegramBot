@@ -130,6 +130,10 @@ const config = {
       .filter(Boolean),
   },
 
+  // Markets the assistant is tuned for: policy-lookup trigger terms and
+  // brand-voice filtering. See config/locales.js to add one.
+  locales: require('./locales').build(process.env.SUPPORTED_LOCALES),
+
   mem0: {
     apiKey: clean(process.env.MEM0_API_KEY) || null,
     appId: clean(process.env.MEM0_APP_ID) || 'techstore',

@@ -56,7 +56,10 @@ function buildSystemInstruction({ platform, userName, memories }) {
     ? `You are a friendly and knowledgeable AI consultant for TechStore. You are talking to a registered user named ${safeName}. Greet them by name when appropriate and act as their personal shopping assistant. `
     : `You are a friendly and knowledgeable AI consultant for TechStore, an electronics store. `;
 
-  instruction += `Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. ALWAYS use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, delivery, warranty, location, or FAQ. CRITICAL: If the user asks about shipping or delivery in Georgian (e.g., 'შიფინგი', 'მიტანა', 'ჩამოტანა', 'გარანტია', 'მისამართი'), you MUST use the askStorePolicy tool! CRITICAL: If the backing store policy is in a different language than the user's input, you MUST silently translate the retrieved policy into the user's language before presenting the answer. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. NEVER apologize under any circumstances. If you made a mistake, just correct it silently. Do not use phrases like 'ბოდიშს გიხდით', 'ბოდიში', or 'შეცდომა გაიპარა'. Be direct and concise. NEVER ask for permission to search for a product or add an item to the cart—just use your tools immediately. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries. CRITICAL: The product database is in English. You MUST translate user product queries and categories to English BEFORE using the searchProducts tool. The ONLY valid categories are: ${VALID_CATEGORIES.join(', ')}.`;
+  const { policyKeywords, apologyPhrases, active } = config.locales;
+  const supportedLanguages = active.map((locale) => locale.name).join(', ');
+
+  instruction += `Your primary base language is English, but you MUST automatically detect and respond in the EXACT SAME LANGUAGE that the user writes their message in. Use the searchProducts tool to look up real-time inventory. ALWAYS use the askStorePolicy tool to answer ANY questions related to store policies, returns, shipping, delivery, warranty, location, or FAQ. CRITICAL: You MUST call askStorePolicy when the user uses any of these terms in any language (${supportedLanguages} are common here): ${policyKeywords.map((k) => `'${k}'`).join(', ')}. Never answer a policy question from your own knowledge. CRITICAL: If the backing store policy is in a different language than the user's input, you MUST silently translate the retrieved policy into the user's language before presenting the answer. Always format prices with the $ (USD) symbol. Be helpful, enthusiastic, and professional. NEVER apologize under any circumstances. If you made a mistake, just correct it silently. Do not use phrases like ${apologyPhrases.slice(0, 6).map((p) => `'${p}'`).join(', ')}. Be direct and concise. NEVER ask for permission to search for a product or add an item to the cart—just use your tools immediately. CRITICAL INSTRUCTION: You are strictly limited to answering questions related to TechStore, electronics, gadgets, our products, and our policies. If a user asks a question completely unrelated to these topics (e.g. history, politics, general knowledge, math, etc.), you MUST politely decline to answer and remind them that you are only here to assist with TechStore inquiries. CRITICAL: The product database is in English. You MUST translate user product queries and categories to English BEFORE using the searchProducts tool. The ONLY valid categories are: ${VALID_CATEGORIES.join(', ')}.`;
 
   if (platform === 'telegram') {
     // Replies are sent with parse_mode 'Markdown', so ask for exactly that. The
@@ -100,7 +103,9 @@ function buildToolDeclarations(platform) {
     {
       name: 'askStorePolicy',
       description:
-        "Look up store policies, returns, shipping, international delivery, FAQs, or store rules. CRITICAL: You MUST use this tool if the user asks about shipping, delivery, or locations in any language (e.g., 'შიფინგი', 'მიტანა', 'საერთაშორისო', 'ჩამოტანა').",
+        'Look up store policies, returns, shipping, international delivery, FAQs, or store rules. ' +
+        'CRITICAL: You MUST use this tool if the user asks about shipping, delivery, warranty or locations ' +
+        `in any language, including these terms: ${config.locales.policyKeywords.join(', ')}.`,
       parameters: {
         type: 'OBJECT',
         properties: {
@@ -320,11 +325,22 @@ async function attemptWithModel({
   return state;
 }
 
-/** Strips apologies the model was told not to produce but sometimes emits anyway. */
+/**
+ * Brand-voice filter: removes apology sentences the model was told not to produce
+ * but sometimes emits anyway. The phrase list is built from the enabled locales,
+ * so adding a market does not mean editing this function.
+ */
+const APOLOGY_PATTERN = (() => {
+  const phrases = config.locales.apologyPhrases;
+  if (phrases.length === 0) return null;
+  const escaped = phrases.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  // Match the offending phrase through to the end of its sentence.
+  return new RegExp(`(${escaped.join('|')})[^.!?]*[.!?]?`, 'gi');
+})();
+
 function stripApologies(text) {
-  const cleaned = text
-    .replace(/(ბოდიშს გიხდით|ბოდიში|შეცდომა გაიპარა|უკაცრავად)[^.!?]*[.!?]/gi, '')
-    .trim();
+  if (!APOLOGY_PATTERN) return text.trim() || '✅';
+  const cleaned = text.replace(APOLOGY_PATTERN, '').replace(/\s{2,}/g, ' ').trim();
   return cleaned || '✅';
 }
 

@@ -1,144 +1,195 @@
-# 🤖 TechStore AI Assistant & E-Commerce Platform
+# 🤖 TechStore — Omnichannel AI Sales Agent
 
-![TechStore AI Assistant](https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=1200&auto=format&fit=crop)
+An AI customer-support and sales agent for an e-commerce store, reachable from **both a Telegram bot and a web chat widget**, sharing one engine, one memory and one product catalogue.
 
-A modern, AI-powered e-commerce platform featuring a fully functional frontend store and an intelligent AI assistant. The AI consultant is accessible both via a **Web Chat Widget** and a **Telegram Bot**, providing users with real-time product inventory searches and precise store policy answers using Retrieval-Augmented Generation (RAG).
+The store's owner edits a **Google Sheet** — products, prices, stock, FAQ, return policy. The agent picks the changes up automatically. No deploy, no CMS, no developer.
+
+**[▶ Live demo](https://telegrambot-frontend.onrender.com)** · 💬 Telegram bot: `@your_bot_username` — ⚠️ **TODO: replace with your real bot handle and link it as `https://t.me/<handle>`**
+
+> Hosted on Render's free tier, which sleeps after 15 minutes of inactivity — the first request may take ~50 seconds to wake the service. Subsequent requests are fast.
 
 ---
 
-## ✨ Key Features
+## Why this project is interesting
 
-* **Omnichannel AI Consultant**: Seamlessly interact with the AI assistant via Telegram or directly on the e-commerce website.
-* **Real-time Inventory Search**: The AI can execute live searches against the store's product database to recommend items with pricing and stock availability (utilizing a 30-second cache to balance speed and API quotas).
-* **Robust Multi-Step Tool Calling**: Built on the official `@google/genai` SDK, the bot can seamlessly chain tools (e.g., searching for a product, then immediately adding it to the cart) within a single turn.
-* **RAG-Powered Policy Engine**: Uses Google Gemini Vector Embeddings (`text-embedding-004`) to understand and answer store policy questions (returns, shipping, FAQs) backed by a Google Sheet database.
-* **Resilient Multi-Model Fallback**: Automatically cascades through `gemini-3.1-flash-lite`, `gemini-2.0-flash`, and `gemini-1.5-flash` to ensure continuous availability even if one model hits a rate limit or API error.
-* **Self-Healing Chat Memory**: Conversations are remembered across sessions using Upstash Redis. The backend automatically sanitizes history (cleaning up orphaned function calls/responses) to prevent `400 Bad Request` errors.
-* **Modern Web Storefront**: A sleek, responsive e-commerce UI built with React, Vite, and Tailwind CSS.
+Most chatbot demos are a single prompt wrapped in a UI. This one is built the way a paying client's system has to be built:
+
+* **It refuses to make things up.** Policy questions are answered from a vector search over the store's own FAQ sheet, never from model knowledge.
+* **It answers in the customer's language** while the product database stays English — queries are translated before lookup, and retrieved policies are translated back.
+* **It survives its dependencies failing.** Redis down, a model unavailable, the Sheets API blipping — each has an explicit fallback rather than a 500.
+* **It knows what it costs.** An admin dashboard reports token spend per model, per day.
+
+---
+
+## ✨ Features
+
+| | |
+|---|---|
+| 🔀 **Omnichannel** | One engine serves the Telegram bot and the website widget. Add a channel by adding an adapter, not by forking the logic. |
+| 🔎 **Live inventory search** | The agent queries real stock and pricing mid-conversation via tool calling, with a 30-second cache and request de-duplication. |
+| 📚 **RAG over Google Sheets** | Policies are embedded with `gemini-embedding-001` (3072-dim) and retrieved by cosine similarity. **The client edits a spreadsheet; the agent's knowledge updates.** |
+| 🧠 **Long-term memory** | [Mem0](https://mem0.ai) extracts durable facts about each customer ("prefers Android", "budget around $800") and personalises later conversations. |
+| 🗣️ **Multilingual** | Replies in the customer's language automatically. Policy-trigger terms and brand-voice rules are configured per locale, not hardcoded. |
+| 🖼️ **Multimodal** | Accepts photos and voice notes on Telegram, and image uploads on the web. |
+| 🛒 **Agentic cart actions** | The agent can add items to the shopping cart through a structured action channel, not by guessing at the DOM. |
+| 🔐 **Authentication** | JWT accounts with scrypt password hashing; signed-in users get a persistent, personalised thread. |
+| 📊 **Admin analytics** | Chats, unique sessions, top questions, tool usage, token spend and a 7-day timeline. |
+| 🛡️ **Production hardening** | Rate limiting, server-side session binding, prompt-injection sanitisation, fail-closed admin auth, graceful shutdown. |
+| ♻️ **Model fallback** | Cascades through a configurable model chain and remembers the one that worked. |
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart TB
+    TG["📱 Telegram"] --> ENG
+    WEB["🌐 React widget<br/>(SSE streaming)"] --> ENG
+
+    subgraph API["Express API"]
+        ENG["⚙️ Chat engine<br/>services/aiChat.js"]
+        MW["🛡️ Rate limit · JWT · CORS"] --> ENG
+    end
+
+    ENG <--> GEM["✨ Gemini<br/>tool calling"]
+
+    ENG --> T1["🔎 searchProducts"]
+    ENG --> T2["📚 askStorePolicy"]
+    ENG --> T3["🛒 addToCart"]
+
+    T1 --> SHEET["📗 Google Sheets<br/>products"]
+    T2 --> RAG["🧮 Vector index<br/>cosine similarity"]
+    RAG --> SHEET2["📗 Google Sheets<br/>FAQ_Policies"]
+
+    ENG <--> REDIS["⚡ Upstash Redis<br/>history · analytics · accounts"]
+    ENG <--> MEM0["🧠 Mem0<br/>long-term profiles"]
+```
+
+**How a policy question is answered**
+
+1. Customer asks about returns — in any language.
+2. Gemini calls the `askStorePolicy` tool rather than answering from memory.
+3. The query is embedded and matched against the pre-embedded FAQ sheet by cosine similarity.
+4. Below the similarity threshold, the agent says it doesn't know instead of inventing an answer.
+5. Above it, the matched policy is returned to the model, which phrases it naturally in the customer's language.
 
 ---
 
 ## 🛠️ Tech Stack
 
-### Frontend
-* **Framework**: React 18 (via Vite)
-* **Styling**: Tailwind CSS
-* **Components**: Custom UI components with a futuristic, premium aesthetic (glassmorphism, gradient texts)
+**Backend** — Node.js · Express 4 · Telegraf 4 · `@google/genai` · Upstash Redis · Mem0 · Google Sheets API · JWT · Jest + Supertest
 
-### Backend
-* **Environment**: Node.js & Express
-* **AI Engine**: Official Google Gen AI SDK (`@google/genai`)
-* **Bot Framework**: Telegraf (Telegram Bot API)
-* **Database (Products & RAG)**: Google Sheets API
-* **Caching / Memory**: Upstash Redis (Serverless Redis)
+**Frontend** — React 19 · Vite 6 · Tailwind CSS 4
+
+**Infrastructure** — Docker · GitHub Actions CI · Render
 
 ---
 
 ## 📂 Project Structure
 
 ```text
-telegram-ai-agent/
-├── backend/                  # Node.js backend server and Telegram bot
-│   ├── index.js              # Main Express server, Telegraf init, and AI Loop
-│   ├── services/
-│   │   ├── googleSheets.js   # Fetches live product inventory from Google Sheets
-│   │   └── ragService.js     # Manages Vector Embeddings and RAG policy lookup
-│   ├── Dockerfile            # Container configuration for deployment
-│   └── package.json
-└── frontend/                 # React frontend application
-    ├── src/
-    │   ├── App.jsx           # Main E-commerce storefront
-    │   ├── components/       # Reusable UI components (Navbar, AIChatWidget, etc.)
-    │   └── index.css         # Tailwind configuration and custom styling
-    ├── vite.config.js
-    └── package.json
+backend/
+├── index.js              # Bootstrap: server, bot launch, graceful shutdown
+├── app.js                # Express assembly (exported for tests)
+├── config/
+│   ├── index.js          # Env loading, validation, all tunables
+│   └── locales.js        # Per-market policy triggers and brand voice
+├── lib/                  # redisClient · lruCache · keyedMutex · password · sessions
+├── middleware/           # auth · rateLimit · errors
+├── routes/               # products · auth · admin · chat
+├── services/
+│   ├── aiChat.js         # Core engine, shared by web + Telegram
+│   ├── ragService.js     # Vector RAG over Google Sheets
+│   ├── googleSheets.js   # Catalogue reader, cached and de-duplicated
+│   ├── chatHistory.js    # Redis history + bounded in-process fallback
+│   ├── memoryService.js  # Mem0 wrapper
+│   └── analytics.js      # Usage counters and cost estimation
+├── bot/telegram.js       # Telegram adapter
+└── tests/                # 85 tests
+
+frontend/src/
+├── App.jsx               # Storefront
+├── lib/api.js            # Single source of truth for API access
+└── components/           # AIChatWidget · AdminDashboard · AuthModal · Cart · Navbar
+```
+
+The rule that keeps this from collapsing back into one file: **routes never talk to Redis, Gemini or Mem0 directly.** They validate input, call a service, and shape a response.
+
+See [`backend/ARCHITECTURE.md`](backend/ARCHITECTURE.md) for storage trade-offs, scaling limits and the known-issues list.
+
+---
+
+## 🚀 Running Locally
+
+**Prerequisites** — Node.js 18+, a [Gemini API key](https://aistudio.google.com/apikey), and a Telegram bot token from [@BotFather](https://t.me/botfather). Redis, Mem0 and Google Sheets are optional: without them the app runs in a degraded but functional mode.
+
+```bash
+git clone https://github.com/voodude2/telegramBot.git
+cd telegramBot/backend
+cp .env.example .env     # then fill in the values
+npm install
+npm run dev
+```
+
+```bash
+cd frontend
+npm install
+npm run dev              # http://localhost:5173
+```
+
+For local development set `FRONTEND_URL=http://localhost:5173` in `backend/.env`.
+
+### Configuration
+
+Every variable is documented in [`backend/.env.example`](backend/.env.example). The ones that matter most:
+
+| Variable | Notes |
+|---|---|
+| `JWT_SECRET` | **Required in production** — the app refuses to start without it. |
+| `FRONTEND_URL` | Exact browser origin, no trailing slash. **Wildcards are refused in production.** |
+| `ADMIN_API_KEY` | Guards `/api/admin/*`. Unset in production ⇒ admin routes return 503 (fails closed). |
+| `GEMINI_MODELS` | Fallback chain, tried in order. |
+| `SUPPORTED_LOCALES` | Markets to tune guardrails for, e.g. `en,ka`. |
+
+### Testing
+
+```bash
+npm test        # 85 tests
+npm run lint    # parses every source file
 ```
 
 ---
 
-## 🚀 Getting Started
+## 📡 API
 
-### Prerequisites
-* Node.js (v18 or higher)
-* A Telegram Bot Token (from [@BotFather](https://t.me/botfather))
-* Google Gemini API Key
-* Google Service Account Credentials (for Google Sheets access)
-* Upstash Redis credentials (optional, for persistent chat memory)
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/healthz` | — | Liveness probe with dependency status |
+| `GET` | `/api/products` | — | Live catalogue |
+| `GET` | `/api/products/:id` | — | Single product |
+| `POST` | `/api/products/refresh` | Admin | Force a cache refresh |
+| `POST` | `/api/auth/register` · `/login` | — | Returns a JWT |
+| `GET` | `/api/auth/me` | User | Current user |
+| `GET` | `/api/chat/session` | — | Issue a signed anonymous session |
+| `POST` | `/api/chat` | Optional | **Streaming chat (SSE)** |
+| `GET` | `/api/admin/stats` · `questions` · `costs` · `timeline` | Admin | Analytics |
+| `GET`/`DELETE` | `/api/admin/memories` | Admin | Inspect or clear long-term memory |
+| `POST` | `/api/admin/rag/refresh` | Admin | Re-index the policy sheet |
 
-### 1. Environment Setup
-
-Navigate to the `backend` directory and create a `.env` file:
-```bash
-cd backend
-cp .env.example .env
-```
-Fill in the following variables in `backend/.env`:
-```env
-PORT=3000
-FRONTEND_URL=http://localhost:5173
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-GEMINI_API_KEY=your_gemini_api_key
-
-# Google Sheets Config
-GOOGLE_SERVICE_ACCOUNT_EMAIL=your_service_account_email
-GOOGLE_PRIVATE_KEY="your_private_key"
-SPREADSHEET_ID=your_spreadsheet_id
-
-# Upstash Redis (Optional for chat history persistence)
-UPSTASH_REDIS_REST_URL=your_redis_url
-UPSTASH_REDIS_REST_TOKEN=your_redis_token
-```
-
-### 2. Run the Backend
-
-```bash
-cd backend
-npm install
-npm start
-```
-*The server will start on port 3000, initialize the RAG vector embeddings, and start listening for Telegram messages.*
-
-### 3. Run the Frontend
-
-In a new terminal window:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-*The React app will be available at `http://localhost:5173`. You can interact with the floating AI Assistant on the bottom right.*
+Chat sessions are resolved **server-side** from the bearer token or an HMAC-signed anonymous id. A client cannot read another user's conversation by supplying their session id.
 
 ---
 
 ## ☁️ Deployment
 
-The project is fully prepared for containerized deployment (e.g., on Render, Heroku, or Railway). 
+Backend as a Render Web Service (root directory `backend`, or use the provided `Dockerfile`); frontend as a Static Site with `VITE_API_URL` pointing at the backend.
 
-### Backend (Render Web Service)
-1. Connect your GitHub repository to Render.
-2. Select the `backend` folder as the Root Directory.
-3. Use `npm install` for the Build Command and `npm start` for the Start Command.
-4. (Optional) Alternatively, use the provided `Dockerfile`.
-5. Add all the environment variables in the Render Dashboard.
-*Note: During Zero-Downtime deployments on Render, you may temporarily see a `409 Conflict` error in logs as the old instance shuts down while the new one connects to Telegram.*
+Pushing to `main` runs the test suite in GitHub Actions and triggers both deploys only if it passes.
 
-### Frontend (Static Site)
-1. Deploy the `frontend` folder to Vercel, Netlify, or Render Static Sites.
-2. Ensure you set the `VITE_API_URL` environment variable to point to your deployed backend URL.
+> During a zero-downtime deploy you may briefly see a Telegram `409 Conflict` as the old instance releases its polling connection. The bot retries automatically.
 
 ---
 
-## 🧠 How the RAG Pipeline Works
+## 📄 License
 
-1. **Initialization**: On server startup, `ragService.js` downloads the `FAQ_Policies` tab from your connected Google Sheet.
-2. **Embedding**: Each Q/A pair is converted into a 768-dimensional mathematical vector using Google's `text-embedding-004` model.
-3. **Retrieval**: When a user asks a policy-related question, the AI triggers the `askStorePolicy` tool. The user's query is embedded, and a cosine similarity search finds the closest matching policy in memory.
-4. **Generation**: The matched policy is fed back to the Gemini model in a strict `functionResponse` format, allowing the AI to generate a natural, conversational answer based on actual store rules.
-
----
-
-## 🤝 Contributing
-Contributions, issues, and feature requests are welcome! Feel free to check the issues page.
-
-## 📝 License
-This project is open-source and available under the MIT License.
+MIT — see [LICENSE](LICENSE).
