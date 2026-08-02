@@ -9,7 +9,18 @@ import { useEffect, useState } from 'react';
  * the slot is never empty — a plain fade-out/fade-in left the headline reading
  * "chosen" with a hole beside it for a third of a second on every cycle.
  */
-export default function RotatingText({ words = [], interval = 2600, className = '' }) {
+export default function RotatingText({
+  words = [],
+  interval = 2600,
+  className = '',
+  /**
+   * Applied to each word. Any gradient-text treatment MUST go here rather than
+   * on an ancestor: `background-clip: text` paints the ancestor's own
+   * background, and these words sit in their own layer (grid item + filter), so
+   * an inherited `color: transparent` would render them completely invisible.
+   */
+  wordClassName = '',
+}) {
   const [index, setIndex] = useState(0);
 
   useEffect(() => {
@@ -30,7 +41,7 @@ export default function RotatingText({ words = [], interval = 2600, className = 
         <span
           key={word}
           aria-hidden={i !== index}
-          className={`col-start-1 row-start-1 whitespace-nowrap transition-all duration-500 ease-out ${
+          className={`col-start-1 row-start-1 whitespace-nowrap transition-all duration-500 ease-out ${wordClassName} ${
             i === index
               ? 'opacity-100 translate-y-0 blur-0'
               : 'opacity-0 -translate-y-3 blur-[6px] pointer-events-none'

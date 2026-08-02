@@ -212,9 +212,18 @@ export default function App() {
               <Reveal delay={80}>
                 <h1 className="text-5xl sm:text-7xl lg:text-8xl font-extrabold tracking-tight mb-6 leading-[1.05]">
                   <span className="block text-white">Premium electronics,</span>
-                  <span className="block text-gradient-animated">
-                    chosen{' '}
-                    <RotatingText words={['for you', 'by AI', 'in seconds', 'your way']} />
+                  {/* The gradient is applied per-word, not to this wrapper:
+                      background-clip:text cannot paint into the rotator's own
+                      compositing layer, which left the word invisible. */}
+                  <span className="block">
+                    <span className="text-gradient-animated">chosen</span>{' '}
+                    {/* Similar word lengths on purpose: the slot is sized to the
+                        longest word, so a very short one sits in an obviously
+                        oversized gap. */}
+                    <RotatingText
+                      words={['for you', 'by our AI', 'your way', 'in seconds']}
+                      wordClassName="text-gradient-animated"
+                    />
                   </span>
                 </h1>
               </Reveal>
