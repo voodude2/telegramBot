@@ -4,7 +4,7 @@ An AI customer-support and sales agent for an e-commerce store, reachable from *
 
 The store's owner edits a **Google Sheet** — products, prices, stock, FAQ, return policy. The agent picks the changes up automatically. No deploy, no CMS, no developer.
 
-**[▶ Live demo](https://telegrambot-frontend.onrender.com)** · 💬 Telegram bot: `@your_bot_username` — ⚠️ **TODO: replace with your real bot handle and link it as `https://t.me/<handle>`**
+**[▶ Live demo](https://telegrambot-frontend.onrender.com)** · 💬 Telegram bot: `@Assistant_Sandbox_bot` — ⚠️ **TODO: replace with your real bot handle and link it as `https://t.me/<handle>`**
 
 > Hosted on Render's free tier, which sleeps after 15 minutes of inactivity — the first request may take ~50 seconds to wake the service. Subsequent requests are fast.
 

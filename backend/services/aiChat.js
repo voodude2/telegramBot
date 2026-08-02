@@ -248,6 +248,16 @@ async function attemptWithModel({
 
   const consumeStream = async (stream) => {
     pendingCalls = [];
+
+    // Token accounting has to work on two axes, and getting either wrong
+    // misreports cost:
+    //  - WITHIN one stream, usageMetadata is CUMULATIVE and can appear on more
+    //    than one chunk, so the last value wins. Summing them multiplies the count.
+    //  - ACROSS streams, each tool round is a separate billed API call, so those
+    //    totals must be added. Assigning would report only the final round.
+    let streamInput = 0;
+    let streamOutput = 0;
+
     for await (const chunk of stream) {
       if (signal?.aborted) throw new AbortedError();
 
@@ -259,12 +269,13 @@ async function attemptWithModel({
         pendingCalls = pendingCalls.concat(chunk.functionCalls);
       }
       if (chunk.usageMetadata) {
-        // Accumulate: a turn can span several tool rounds, and assigning here
-        // meant only the final round's tokens were ever counted.
-        state.inputTokens += chunk.usageMetadata.promptTokenCount || 0;
-        state.outputTokens += chunk.usageMetadata.candidatesTokenCount || 0;
+        streamInput = chunk.usageMetadata.promptTokenCount || 0;
+        streamOutput = chunk.usageMetadata.candidatesTokenCount || 0;
       }
     }
+
+    state.inputTokens += streamInput;
+    state.outputTokens += streamOutput;
   };
 
   const messagePayload = media
@@ -334,8 +345,12 @@ const APOLOGY_PATTERN = (() => {
   const phrases = config.locales.apologyPhrases;
   if (phrases.length === 0) return null;
   const escaped = phrases.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  // Match the offending phrase through to the end of its sentence.
-  return new RegExp(`(${escaped.join('|')})[^.!?]*[.!?]?`, 'gi');
+  // Match the offending phrase through to the end of its sentence. The closing
+  // punctuation is REQUIRED on purpose: with it optional, an unpunctuated reply
+  // like "I'm sorry, we don't have that in stock" matched to end-of-string and
+  // the customer got '✅' instead of the answer. Better to leave a stray apology
+  // than to delete the information the customer asked for.
+  return new RegExp(`(${escaped.join('|')})[^.!?]*[.!?]`, 'gi');
 })();
 
 function stripApologies(text) {
