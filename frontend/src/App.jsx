@@ -109,11 +109,33 @@ export default function App() {
   };
 
   const handleChatAction = (action) => {
-    if (action.type === 'ADD_TO_CART' && action.payload && action.payload.productId) {
-      const product = products.find(p => p.id === action.payload.productId);
-      if (product) {
-        handleAddToCart(product);
+    const payload = action?.payload || {};
+
+    switch (action?.type) {
+      case 'ADD_TO_CART': {
+        const product = products.find(p => p.id === payload.productId);
+        if (product) handleAddToCart(product);
+        break;
       }
+
+      case 'REMOVE_FROM_CART': {
+        // A quantity means "take some off"; no quantity means remove the line.
+        setCartItems(prev => prev.flatMap(item => {
+          if (item.id !== payload.productId) return [item];
+          if (!payload.quantity) return [];
+          const remaining = item.quantity - payload.quantity;
+          return remaining > 0 ? [{ ...item, quantity: remaining }] : [];
+        }));
+        setIsCartOpen(true);
+        break;
+      }
+
+      case 'CLEAR_CART':
+        setCartItems([]);
+        break;
+
+      default:
+        break;
     }
   };
 
@@ -309,8 +331,9 @@ export default function App() {
       <AIChatWidget 
         isOpen={isAIChatOpen} 
         setIsOpen={setIsAIChatOpen} 
-        onAction={handleChatAction} 
+        onAction={handleChatAction}
         user={user}
+        cartItems={cartItems}
       />
 
       {/* Auth Modal */}

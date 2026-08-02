@@ -60,13 +60,39 @@ function resolveEnabled(raw) {
   return known.length > 0 ? known : DEFAULT_LOCALES;
 }
 
-function build(raw) {
+/**
+ * Two different concerns, deliberately separated:
+ *
+ *  - GUARDRAILS (`policyKeywords`, `apologyPhrases`) span every enabled locale.
+ *    The agent must recognise a Georgian shipping question and must filter a
+ *    Georgian apology, regardless of what language the interface is in.
+ *
+ *  - UI COPY (`ui.welcome`, `ui.errorMessage`) comes from ONE locale only.
+ *    Canned text the product emits unprompted — the widget greeting, the bot's
+ *    /start message — is part of the interface, and mixing languages there looks
+ *    unfinished. The agent still detects and replies in the customer's language;
+ *    it just does not open in a language nobody asked for.
+ *
+ * Set UI_LOCALE to change the interface language without touching which
+ * languages the agent understands.
+ */
+function build(raw, uiLocaleRaw) {
   const enabled = resolveEnabled(raw);
   const active = enabled.map((code) => ({ code, ...locales[code] }));
+
+  const requestedUi = String(uiLocaleRaw || '').trim().toLowerCase();
+  const uiCode = locales[requestedUi] ? requestedUi : 'en';
+  if (requestedUi && !locales[requestedUi]) {
+    console.warn(`⚠️  Unknown UI_LOCALE "${requestedUi}", falling back to English.`);
+  }
+  const ui = locales[uiCode];
 
   return {
     enabled,
     active,
+    uiCode,
+    /** Interface copy — single language by design. */
+    ui: { welcome: ui.welcome, errorMessage: ui.errorMessage },
     /** Every policy trigger term across enabled locales. */
     policyKeywords: active.flatMap((locale) => locale.policyKeywords),
     /** Every apology phrase across enabled locales, longest first so that
@@ -74,9 +100,6 @@ function build(raw) {
     apologyPhrases: active
       .flatMap((locale) => locale.apologyPhrases)
       .sort((a, b) => b.length - a.length),
-    /** Bilingual welcome/error text, primary locale first. */
-    welcome: active.map((locale) => locale.welcome).join('\n\n'),
-    errorMessage: active.map((locale) => locale.errorMessage).join(' / '),
   };
 }
 

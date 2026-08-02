@@ -13,10 +13,11 @@ const { processAIChat } = require('../services/aiChat');
 const TELEGRAM_MAX_MESSAGE = 4096;
 const MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024;
 
-// Customer-facing copy comes from the enabled locales rather than being pinned
-// to one market in engine code. See config/locales.js.
-const WELCOME = config.locales.welcome;
-const GENERIC_ERROR = config.locales.errorMessage;
+// Canned interface copy is single-language (UI_LOCALE, English by default). The
+// agent still detects and replies in the customer's language — it just does not
+// greet them in one they did not use.
+const WELCOME = config.locales.ui.welcome;
+const GENERIC_ERROR = config.locales.ui.errorMessage;
 
 function stripMarkdown(text) {
   return text.replace(/\*\*/g, '').replace(/\*/g, '').replace(/_/g, '').replace(/`/g, '');

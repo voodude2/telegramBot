@@ -132,7 +132,7 @@ const config = {
 
   // Markets the assistant is tuned for: policy-lookup trigger terms and
   // brand-voice filtering. See config/locales.js to add one.
-  locales: require('./locales').build(process.env.SUPPORTED_LOCALES),
+  locales: require('./locales').build(process.env.SUPPORTED_LOCALES, process.env.UI_LOCALE),
 
   mem0: {
     apiKey: clean(process.env.MEM0_API_KEY) || null,
@@ -166,6 +166,8 @@ const config = {
     // Every search result is serialised into the model's context, so this caps
     // both answer quality (too many options is a worse recommendation) and cost.
     maxSearchResults: parseInt(process.env.MAX_SEARCH_RESULTS, 10) || 12,
+    // Cart lines summarised into the prompt so the agent can act on the cart.
+    maxCartItems: parseInt(process.env.MAX_CART_ITEMS, 10) || 30,
   },
 
   rateLimits: {

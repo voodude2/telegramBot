@@ -34,11 +34,27 @@ describe('Locale configuration', () => {
     expect(long).toBeLessThan(short);
   });
 
-  it('builds bilingual welcome and error copy', () => {
+  it('keeps interface copy in a single language even when several are understood', () => {
+    // The widget greeting used to be English + Georgian concatenated, which
+    // looked unfinished on an English storefront. Guardrails stay multilingual;
+    // only the canned copy is pinned to one language.
     const both = build('en,ka');
-    expect(both.welcome).toContain(locales.en.welcome);
-    expect(both.welcome).toContain(locales.ka.welcome);
-    expect(both.errorMessage).toContain('/');
+    expect(both.ui.welcome).toBe(locales.en.welcome);
+    expect(both.ui.errorMessage).toBe(locales.en.errorMessage);
+    expect(both.ui.welcome).not.toMatch(/[Ⴀ-ჿ]/); // no Georgian script
+  });
+
+  it('still recognises Georgian input while showing an English interface', () => {
+    const both = build('en,ka', 'en');
+    expect(both.uiCode).toBe('en');
+    expect(both.policyKeywords).toEqual(expect.arrayContaining(locales.ka.policyKeywords));
+    expect(both.apologyPhrases).toEqual(expect.arrayContaining(locales.ka.apologyPhrases));
+  });
+
+  it('honours UI_LOCALE and falls back to English when it is unknown', () => {
+    expect(build('en,ka', 'ka').ui.welcome).toBe(locales.ka.welcome);
+    expect(build('en,ka', 'klingon').ui.welcome).toBe(locales.en.welcome);
+    expect(build('en,ka', '').ui.welcome).toBe(locales.en.welcome);
   });
 });
 

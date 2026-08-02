@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { API_URL, SESSION_KEY, authHeaders } from '../lib/api';
 
-export default function AIChatWidget({ isOpen, setIsOpen, onAction, user }) {
+export default function AIChatWidget({ isOpen, setIsOpen, onAction, user, cartItems = [] }) {
   const [messages, setMessages] = useState([
     {
       id: 'welcome',
-      text: "Hello! 👋 I'm TechStore's AI Consultant. How can I help you today?\n\n(გამარჯობა! 👋 მე ვარ TechStore-ის AI კონსულტანტი. შემიძლია გიპასუხოთ ნებისმიერ ენაზე!)",
+      // Interface copy is English only. The assistant still detects and replies
+      // in whatever language the customer writes in.
+      text: "Hello! 👋 I'm TechStore's AI Consultant. Ask me about products, pricing, stock or store policies — in any language.",
       sender: 'assistant',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
@@ -86,7 +88,10 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction, user }) {
         body: JSON.stringify({
           message: messageText,
           sessionId: sessionId || undefined,
-          media: selectedFile ? { data: selectedFile.data, mimeType: selectedFile.mimeType } : undefined
+          media: selectedFile ? { data: selectedFile.data, mimeType: selectedFile.mimeType } : undefined,
+          // The cart lives in this browser, so the assistant can only act on it
+          // ("remove the headphones") if we send a snapshot with each turn.
+          cart: cartItems.map(({ id, name, quantity }) => ({ id, name, quantity }))
         })
       });
       
@@ -179,12 +184,20 @@ export default function AIChatWidget({ isOpen, setIsOpen, onAction, user }) {
     }
   };
 
-  const quickPrompts = [
-    "💻 What laptops do you have?",
-    "🎧 Show audio headphones",
-    "📦 Which items are in stock?",
-    "⚡ Any webcams available?"
-  ];
+  // Swap the suggestions once there is a cart, so the cart tools are discoverable.
+  const quickPrompts = cartItems.length > 0
+    ? [
+        "🛒 What's in my cart?",
+        "❌ Remove the last item",
+        "🚚 What's your shipping policy?",
+        "🧹 Clear my cart"
+      ]
+    : [
+        "💻 What laptops do you have?",
+        "🎧 Show audio headphones",
+        "📦 Which items are in stock?",
+        "↩️ What's your return policy?"
+      ];
 
   return (
     <>

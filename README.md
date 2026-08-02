@@ -31,7 +31,8 @@ Most chatbot demos are a single prompt wrapped in a UI. This one is built the wa
 | 🧠 **Long-term memory** | [Mem0](https://mem0.ai) extracts durable facts about each customer ("prefers Android", "budget around $800") and personalises later conversations. |
 | 🗣️ **Multilingual** | Replies in the customer's language automatically. Policy-trigger terms and brand-voice rules are configured per locale, not hardcoded. |
 | 🖼️ **Multimodal** | Accepts photos and voice notes on Telegram, and image uploads on the web. |
-| 🛒 **Agentic cart actions** | The agent can add items to the shopping cart through a structured action channel, not by guessing at the DOM. |
+| 🛒 **Agentic cart control** | The agent sees the customer's cart and can add to it, remove from it or empty it, through a structured action channel rather than by guessing at the DOM. |
+| 🧑‍💼 **Full admin console** | Product create/edit/delete written straight to Google Sheets, plus analytics, cost tracking, memory inspection and live service health. |
 | 🔐 **Authentication** | JWT accounts with scrypt password hashing; signed-in users get a persistent, personalised thread. |
 | 📊 **Admin analytics** | Chats, unique sessions, top questions, tool usage, token spend and a 7-day timeline. |
 | 🛡️ **Production hardening** | Rate limiting, server-side session binding, prompt-injection sanitisation, fail-closed admin auth, graceful shutdown. |
@@ -172,9 +173,17 @@ npm run lint    # parses every source file
 | `GET` | `/api/auth/me` | User | Current user |
 | `GET` | `/api/chat/session` | — | Issue a signed anonymous session |
 | `POST` | `/api/chat` | Optional | **Streaming chat (SSE)** |
+| `POST` | `/api/auth/logout-all` | User | Revoke every session for the account |
 | `GET` | `/api/admin/stats` · `questions` · `costs` · `timeline` | Admin | Analytics |
+| `GET` | `/api/admin/health` | Admin | Dependency status and configuration |
+| `GET`/`POST` | `/api/admin/products` | Admin | List with summary · create |
+| `PATCH`/`DELETE` | `/api/admin/products/:id` | Admin | Update · delete |
 | `GET`/`DELETE` | `/api/admin/memories` | Admin | Inspect or clear long-term memory |
 | `POST` | `/api/admin/rag/refresh` | Admin | Re-index the policy sheet |
+
+Product writes go to the same Google Sheet the AI reads, so the service account
+needs **Editor** access on the spreadsheet — Viewer is enough for reads and will
+fail writes with a clear 403.
 
 Chat sessions are resolved **server-side** from the bearer token or an HMAC-signed anonymous id. A client cannot read another user's conversation by supplying their session id.
 

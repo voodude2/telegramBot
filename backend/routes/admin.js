@@ -10,6 +10,9 @@ const router = express.Router();
 // ADMIN_API_KEY is unset in production.
 router.use(requireAdmin);
 
+// Catalogue management (create/update/delete), admin-gated by the line above.
+router.use('/products', require('./adminProducts'));
+
 router.get('/stats', async (_req, res, next) => {
   try {
     res.json(await analytics.getStats());
@@ -69,7 +72,18 @@ router.post('/rag/refresh', async (_req, res, next) => {
 });
 
 router.get('/health', (_req, res) => {
-  res.json({ ragPolicies: getIndexSize(), mem0: memoryService.isEnabled });
+  const config = require('../config');
+  res.json({
+    ragPolicies: getIndexSize(),
+    mem0: memoryService.isEnabled,
+    redis: config.redis.enabled,
+    sheets: Boolean(config.google.serviceAccountEmail && config.google.spreadsheetId),
+    models: config.gemini.candidateModels,
+    locales: config.locales.enabled,
+    uiLocale: config.locales.uiCode,
+    uptimeSeconds: Math.round(process.uptime()),
+    nodeEnv: config.NODE_ENV,
+  });
 });
 
 module.exports = router;

@@ -21,7 +21,7 @@ router.get('/session', (_req, res) => {
  * the chat number — and read or continue that conversation.
  */
 router.post('/', chatLimiter, optionalUser, async (req, res) => {
-  const { message, sessionId: requested, media } = req.body || {};
+  const { message, sessionId: requested, media, cart } = req.body || {};
 
   if (!message && !media) {
     return res.status(400).json({ error: 'Message or media is required' });
@@ -72,6 +72,9 @@ router.post('/', chatLimiter, optionalUser, async (req, res) => {
       platform: 'web',
       media,
       userName,
+      // Display context so the agent can act on the cart. Sanitised downstream;
+      // the cart lives in the browser, so this is the only way to see it.
+      cart,
       signal: controller.signal,
       onChunk: (text) => send({ text }),
       onReset: () => send({ reset: true }),

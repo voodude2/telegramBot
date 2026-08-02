@@ -28,8 +28,17 @@ function notFound(req, res) {
 function errorHandler(err, req, res, _next) {
   const status = err.status || err.statusCode || 500;
 
-  if (status >= 500) {
+  // `expose` marks an error we raised deliberately to describe a known
+  // operational state (e.g. "Google Sheets is not configured"). Those carry a
+  // useful, safe message and are not bugs, so they are logged as one-line
+  // warnings rather than stack traces, and the reason reaches the caller —
+  // otherwise an admin sees "Internal server error" and has nothing to act on.
+  const isOperational = err.expose === true;
+
+  if (status >= 500 && !isOperational) {
     console.error(`❌ [${req.method} ${req.path}]`, err);
+  } else if (status >= 500) {
+    console.warn(`⚠️  [${req.method} ${req.path}] ${err.message}`);
   }
 
   if (res.headersSent) {
@@ -37,8 +46,9 @@ function errorHandler(err, req, res, _next) {
     return res.end();
   }
 
-  const body = { error: status >= 500 ? 'Internal server error' : err.message || 'Bad request' };
-  if (!config.isProduction && status >= 500) body.detail = err.message;
+  const safeToShow = status < 500 || isOperational;
+  const body = { error: safeToShow ? err.message || 'Bad request' : 'Internal server error' };
+  if (!config.isProduction && !safeToShow) body.detail = err.message;
 
   res.status(status).json(body);
 }
