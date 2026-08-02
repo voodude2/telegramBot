@@ -2,54 +2,262 @@
 
 @theme {
   --font-sans: "Inter", sans-serif;
-  
+
   --color-primary: #6c5ce7;
+  --color-primary-soft: #8b7cf0;
   --color-secondary: #00cec9;
+  --color-accent: #f39c6b;
   --color-danger: #e94560;
-  
+
   --color-bg-dark: #0a0a1a;
   --color-bg-card: #12122a;
-  
+  --color-bg-elevated: #181834;
+
   --color-text-main: #e8e8ff;
   --color-text-muted: #8888aa;
-  
+
   --color-border-glow: rgba(108, 92, 231, 0.2);
+}
+
+html {
+  scroll-behavior: smooth;
+  /* Fixed navbar is 5rem; keep anchored sections clear of it. */
+  scroll-padding-top: 6rem;
 }
 
 body {
   font-family: var(--font-sans);
   background-color: var(--color-bg-dark);
   color: var(--color-text-main);
+  overflow-x: hidden;
 }
 
-/* Animations */
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--color-bg-dark); }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--color-primary), var(--color-secondary));
+  border-radius: 999px;
+  border: 2px solid var(--color-bg-dark);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-primary-soft); }
+
+.scrollbar-thin::-webkit-scrollbar { width: 6px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(108, 92, 231, 0.5); border: none; }
+
+::selection { background: rgba(108, 92, 231, 0.4); color: #fff; }
+
+/* ── Ambient background ────────────────────────────────────────────────── */
+
+/* Slow-drifting colour fields. Uses transform only, so it never triggers layout. */
+@keyframes aurora-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  33%  { transform: translate3d(4%, -6%, 0) scale(1.12); }
+  66%  { transform: translate3d(-5%, 4%, 0) scale(0.94); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+
+.aurora {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(90px);
+  opacity: 0.5;
+  pointer-events: none;
+  will-change: transform;
+  animation: aurora-drift 22s ease-in-out infinite;
+}
+
+/* Faint technical grid that fades out downward. */
+.grid-overlay {
+  background-image:
+    linear-gradient(rgba(108, 92, 231, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(108, 92, 231, 0.07) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: linear-gradient(180deg, #000 0%, transparent 75%);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 75%);
+}
+
+/* ── Scroll reveal ─────────────────────────────────────────────────────── */
+
+/*
+ * Elements start hidden and are revealed when IntersectionObserver adds
+ * .is-visible (see hooks/useReveal.js). Stagger comes from --reveal-delay so a
+ * grid can cascade without a timer per item.
+ */
+.reveal {
+  opacity: 0;
+  transform: translate3d(0, 28px, 0);
+  transition:
+    opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+  will-change: opacity, transform;
+}
+.reveal-left  { transform: translate3d(-36px, 0, 0); }
+.reveal-right { transform: translate3d(36px, 0, 0); }
+.reveal-scale { transform: scale(0.92); }
+.reveal-blur  { filter: blur(10px); transform: translate3d(0, 16px, 0); }
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+  filter: blur(0);
+}
+
+/* ── Motion ────────────────────────────────────────────────────────────── */
+
 @keyframes float {
-  0% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
-  100% { transform: translateY(0px); }
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-10px); }
 }
-
-.animate-float {
-  animation: float 4s ease-in-out infinite;
-}
+.animate-float { animation: float 4s ease-in-out infinite; }
 
 @keyframes pulse-glow {
-  0% { box-shadow: 0 0 0 0 rgba(108, 92, 231, 0.4); }
-  70% { box-shadow: 0 0 20px 10px rgba(108, 92, 231, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(108, 92, 231, 0.4); }
+  70%  { box-shadow: 0 0 20px 10px rgba(108, 92, 231, 0); }
   100% { box-shadow: 0 0 0 0 rgba(108, 92, 231, 0); }
 }
-
-.animate-pulse-glow {
-  animation: pulse-glow 2s infinite;
-}
+.animate-pulse-glow { animation: pulse-glow 2s infinite; }
 
 @keyframes gradient-x {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
 }
-
 .animate-gradient-x {
   background-size: 200% 200%;
   animation: gradient-x 15s ease infinite;
+}
+
+/* Animated gradient text. */
+.text-gradient-animated {
+  background: linear-gradient(
+    90deg,
+    var(--color-primary), var(--color-secondary),
+    var(--color-primary-soft), var(--color-primary)
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gradient-x 8s linear infinite;
+}
+
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+.shimmer { position: relative; overflow: hidden; }
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
+  animation: shimmer 1.6s infinite;
+}
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 32s linear infinite;
+  will-change: transform;
+}
+.marquee-mask {
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+
+@keyframes scroll-hint {
+  0%   { transform: translateY(0);   opacity: 0; }
+  35%  { opacity: 1; }
+  100% { transform: translateY(14px); opacity: 0; }
+}
+.animate-scroll-hint { animation: scroll-hint 1.9s ease-in-out infinite; }
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translate3d(0, 20px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+.animate-fade-in-up { animation: fade-in-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* ── Surfaces ──────────────────────────────────────────────────────────── */
+
+/* Cursor-tracked spotlight. --mx/--my are set on mousemove by the card. */
+.spotlight { position: relative; }
+.spotlight::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+  background: radial-gradient(
+    340px circle at var(--mx, 50%) var(--my, 50%),
+    rgba(108, 92, 231, 0.16),
+    transparent 68%
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+.spotlight:hover::before { opacity: 1; }
+
+/* Gradient hairline border that lights up on hover. */
+.glow-border {
+  position: relative;
+  isolation: isolate;
+}
+.glow-border::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-secondary), transparent 60%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+  pointer-events: none;
+}
+.glow-border:hover::after { opacity: 1; }
+
+.glass {
+  background: rgba(18, 18, 42, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* ── Accessibility ─────────────────────────────────────────────────────── */
+
+/*
+ * Honour the OS "reduce motion" setting. Decorative movement is switched off
+ * and revealed content is shown immediately — without this, someone with
+ * vestibular sensitivity gets a page that moves constantly, and anyone using it
+ * would see permanently invisible content if JS-driven reveals were skipped.
+ */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .reveal,
+  .reveal-left,
+  .reveal-right,
+  .reveal-scale,
+  .reveal-blur {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+
+  .aurora { animation: none; }
 }

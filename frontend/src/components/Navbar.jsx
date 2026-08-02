@@ -1,4 +1,11 @@
+import { useScrolled, useActiveSection } from '../hooks/useReveal';
+
 export default function Navbar({ cartCount, onOpenCart, isMobileMenuOpen, setIsMobileMenuOpen, user, onLoginClick, onLogout }) {
+  // The bar condenses and gains contrast once the hero scrolls away, so it stays
+  // legible over content without being heavy over the hero itself.
+  const scrolled = useScrolled(30);
+  const activeSection = useActiveSection(['hero', 'products', 'about', 'contact']);
+
   const navLinks = [
     { label: 'Home', target: 'hero' },
     { label: 'Products', target: 'products' },
@@ -17,16 +24,20 @@ export default function Navbar({ cartCount, onOpenCart, isMobileMenuOpen, setIsM
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 bg-bg-dark/80 backdrop-blur-md border-b border-border-glow">
+    <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
+      scrolled
+        ? 'bg-bg-dark/90 backdrop-blur-xl border-b border-border-glow shadow-lg shadow-black/20'
+        : 'bg-transparent border-b border-transparent'
+    }`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-20">
+        <div className={`flex justify-between items-center transition-all duration-500 ${scrolled ? 'h-16' : 'h-20'}`}>
           {/* Logo */}
           <div 
             onClick={handleLogoClick} 
             className="flex-shrink-0 flex items-center cursor-pointer group"
           >
-            <span className="text-3xl mr-2 group-hover:animate-pulse-glow rounded-full">⚡</span>
-            <span className="text-2xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+            <span className={`mr-2 rounded-full transition-all duration-500 group-hover:animate-pulse-glow ${scrolled ? 'text-2xl' : 'text-3xl'}`}>⚡</span>
+            <span className={`font-bold text-gradient-animated transition-all duration-500 ${scrolled ? 'text-xl' : 'text-2xl'}`}>
               TechStore
             </span>
           </div>
@@ -34,12 +45,17 @@ export default function Navbar({ cartCount, onOpenCart, isMobileMenuOpen, setIsM
           {/* Desktop Nav */}
           <nav className="hidden md:flex space-x-8">
             {navLinks.map(link => (
-              <button 
-                key={link.label} 
-                onClick={() => handleNavClick(link.target)} 
-                className="text-text-muted hover:text-white transition-colors duration-300 font-medium cursor-pointer"
+              <button
+                key={link.label}
+                onClick={() => handleNavClick(link.target)}
+                className={`relative py-1 font-medium cursor-pointer transition-colors duration-300 group/link ${
+                  activeSection === link.target ? 'text-white' : 'text-text-muted hover:text-white'
+                }`}
               >
                 {link.label}
+                <span className={`absolute -bottom-0.5 left-0 h-0.5 rounded-full bg-gradient-to-r from-primary to-secondary transition-all duration-300 ${
+                  activeSection === link.target ? 'w-full' : 'w-0 group-hover/link:w-full'
+                }`} />
               </button>
             ))}
           </nav>
@@ -92,7 +108,7 @@ export default function Navbar({ cartCount, onOpenCart, isMobileMenuOpen, setIsM
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
               {cartCount > 0 && (
-                <span className="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-danger rounded-full">
+                <span key={cartCount} className="absolute top-0 right-0 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 text-[11px] font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-danger rounded-full shadow-lg shadow-danger/40 animate-fade-in-up">
                   {cartCount}
                 </span>
               )}
